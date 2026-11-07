@@ -1,0 +1,6 @@
+dist/
+prototypes/
+docs/archive/
+src-tauri/target/
+src-tauri/gen/
+package-lock.json

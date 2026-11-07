@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  queue: max
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate release and prepare updater configuration
+        env:
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[1-9][0-9]*)?$') {
+            throw "Unsupported release tag: $tag"
+          }
+          $notes = "docs/release/releasenote-$tag.md"
+          if (!(Test-Path -LiteralPath $notes -PathType Leaf) -or
+              [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $notes -Raw))) {
+            throw "Missing or empty release notes: $notes"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:UPDATER_PUBLIC_KEY)) {
+            throw 'Set the TAURI_UPDATER_PUBLIC_KEY repository variable.'
+          }
+          @{
+            version = $tag.Substring(1) -replace '-rc([0-9]+)$', '-rc.$1'
+            bundle = @{ createUpdaterArtifacts = $true }
+            plugins = @{
+              updater = @{
+                pubkey = $env:UPDATER_PUBLIC_KEY.Trim()
+                endpoints = @("$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/releases/download/updates/latest.json")
+              }
+            }
+          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$env:RUNNER_TEMP/livecap-release.json"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run check
+      - name: Build signed Windows installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw 'Set the TAURI_SIGNING_PRIVATE_KEY repository secret.'
+          }
+          npm run tauri -- build --ci --bundles nsis --config "$env:RUNNER_TEMP/livecap-release.json" -- --locked
+      - name: Publish version and update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/publish-release.ps1

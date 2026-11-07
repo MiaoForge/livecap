@@ -1,0 +1,94 @@
+[
+  {
+    "tokens": [
+      {
+        "text": "The claim",
+        "is_final": false,
+        "speaker": "1",
+        "language": "en",
+        "start_ms": 0,
+        "end_ms": 390,
+        "translation_status": "original"
+      }
+    ]
+  },
+  {
+    "tokens": [
+      {
+        "text": "Clang",
+        "is_final": true,
+        "speaker": "1",
+        "language": "en",
+        "start_ms": 0,
+        "end_ms": 340,
+        "translation_status": "original"
+      },
+      {
+        "text": " crashes",
+        "is_final": false,
+        "speaker": "1",
+        "language": "en",
+        "start_ms": 350,
+        "end_ms": 650,
+        "translation_status": "original"
+      },
+      {
+        "text": "Clang",
+        "is_final": false,
+        "language": "zh",
+        "source_language": "en",
+        "translation_status": "translation"
+      }
+    ]
+  },
+  {
+    "tokens": [
+      {
+        "text": " crashes.",
+        "is_final": true,
+        "speaker": "1",
+        "language": "en",
+        "start_ms": 350,
+        "end_ms": 650,
+        "translation_status": "original"
+      },
+      {
+        "text": "In Sema?",
+        "is_final": true,
+        "speaker": "2",
+        "language": "en",
+        "start_ms": 750,
+        "end_ms": 1140,
+        "translation_status": "original"
+      },
+      {
+        "text": "Clang 崩溃了。",
+        "is_final": true,
+        "language": "zh",
+        "source_language": "en",
+        "translation_status": "translation"
+      },
+      {
+        "text": "在",
+        "is_final": false,
+        "speaker": "2",
+        "language": "zh",
+        "source_language": "en",
+        "translation_status": "translation"
+      }
+    ]
+  },
+  {
+    "tokens": [
+      {
+        "text": "在 Sema 中吗？",
+        "is_final": true,
+        "speaker": "2",
+        "language": "zh",
+        "source_language": "en",
+        "translation_status": "translation"
+      }
+    ],
+    "finished": true
+  }
+]

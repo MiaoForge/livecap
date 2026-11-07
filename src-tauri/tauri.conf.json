@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Livecap",
+  "version": "0.1.0",
+  "identifier": "com.chenmiaoi.livecap",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Livecap",
+        "width": 1280,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 620,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "center": true,
+        "visible": true
+      },
+      {
+        "label": "captions",
+        "url": "index.html?window=captions",
+        "transparent": true,
+        "title": "Livecap · 实时双语字幕",
+        "width": 900,
+        "height": 150,
+        "minWidth": 320,
+        "minHeight": 130,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "center": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; media-src 'self' blob:"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/MiaoForge/livecap/releases/download/updates/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
