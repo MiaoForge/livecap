@@ -7,6 +7,11 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react()],
+  build: {
+    // MeetingDiagram loads Excalidraw on demand. Its prebundled modules (including
+    // Mermaid) cannot be split further; allow up to 2 MB per minified chunk.
+    chunkSizeWarningLimit: 2_000,
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
