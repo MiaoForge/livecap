@@ -111,6 +111,7 @@ fn pending_drafts_cannot_trigger_commit_of_the_current_turn() {
         ("current".into(), draft("It happens when")),
     ]);
     let mut pending = VecDeque::from([Pending {
+        boundary: false,
         id: None,
         final_text: None,
         start: 0,
@@ -566,6 +567,7 @@ async fn unintelligible_audio_clears_its_draft_and_unblocks_later_turns() {
     let _server_socket = server.await.unwrap();
     for id in ["unintelligible", "later", "after-recovery"] {
         connection.pending.push_back(Pending {
+            boundary: false,
             id: Some(id.into()),
             final_text: None,
             start: 0,
@@ -609,4 +611,73 @@ async fn unintelligible_audio_clears_its_draft_and_unblocks_later_turns() {
             .unwrap_err()
             .contains("额度不足")
     );
+}
+
+#[tokio::test]
+async fn silence_after_a_size_commit_flushes_only_after_its_final_text() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let mut socket = accept_async(listener.accept().await.unwrap().0)
+            .await
+            .unwrap();
+        next(&mut socket, "session.update").await;
+        send(&mut socket, json!({"type":"session.updated"})).await;
+        socket
+    });
+    let mut connection = Connection::handshake(
+        &endpoint,
+        &[],
+        authorization("test-only").unwrap(),
+        "sentences".into(),
+    )
+    .await
+    .unwrap();
+    let _server_socket = server.await.unwrap();
+    connection.pending.push_back(Pending {
+        boundary: false,
+        id: Some("size-cut".into()),
+        final_text: None,
+        start: 0,
+        end: MAX_SAMPLES as u64,
+        since: Instant::now(),
+    });
+    let events = Mutex::new(Vec::new());
+    let emit = |event| events.lock().unwrap().push(event);
+    connection
+        .packet(vec![0; QUIET_SAMPLES * 2], &emit)
+        .await
+        .unwrap();
+    assert!(connection.pending[0].boundary);
+    assert!(
+        !events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::TranscriptBoundary))
+    );
+    connection.receive(json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"size-cut","transcript":"unfinished thought"}), &emit).unwrap();
+    let events = events.into_inner().unwrap();
+    let ordered: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                StreamEvent::Transcript(_) | StreamEvent::TranscriptBoundary
+            )
+        })
+        .collect();
+    assert!(matches!(ordered[0], StreamEvent::Transcript(_)));
+    assert!(matches!(ordered[1], StreamEvent::TranscriptBoundary));
+    assert_eq!(ordered.len(), 2);
+
+    let events = Mutex::new(Vec::new());
+    connection
+        .ingest(Packet::Paused, &|event| events.lock().unwrap().push(event))
+        .await
+        .unwrap();
+    assert!(matches!(
+        events.lock().unwrap().as_slice(),
+        [StreamEvent::TranscriptBoundary]
+    ));
 }

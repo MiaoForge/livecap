@@ -59,6 +59,8 @@ impl Provider {
 }
 
 pub enum StreamEvent {
+    /// An actual pause after an ordered final transcript, not an audio size limit.
+    TranscriptBoundary,
     Transcript(TranscriptEvent),
     AudioLevel(f32),
     TranslationWarning(String),

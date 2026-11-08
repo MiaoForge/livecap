@@ -17,6 +17,7 @@ mod storage;
 mod terms;
 mod tls;
 mod transcript;
+mod transcript_segments;
 mod usage;
 
 use credentials::Credentials;

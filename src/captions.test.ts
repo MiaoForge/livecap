@@ -711,3 +711,42 @@ it("keeps complete archived records while limiting the live display", () => {
   expect(archive.confirmed[0].text).toBe("Sentence 0.");
   expect(archive.droppedSegments).toBe(0);
 });
+
+it("replays a sentence continued across audio batches with its matching final translation", () => {
+  let state = createCaptionState();
+  const apply = (tokens: TranscriptToken[]) => {
+    state = applyCaptionFrame(state, {
+      session_id: state.sessionId,
+      tokens,
+      finished: false,
+    });
+  };
+  const source = (text: string, revision: number, is_final: boolean) =>
+    token(text, {
+      source_segment_id: "sentence-0",
+      revision,
+      is_final,
+      translation_status: "original",
+      start_ms: 0,
+      end_ms: 30000,
+    });
+  apply([source("Professor Zhang will", 1, false)]);
+  apply([source("Professor Zhang will explain binary analysis", 2, false)]);
+  apply([source("Professor Zhang will explain binary analysis.", 3, true)]);
+  apply([
+    token("张教授将讲解二进制分析。", {
+      source_segment_id: "sentence-0",
+      revision: 3,
+      translation_status: "translation",
+      translation_source: "openai",
+    }),
+  ]);
+  expect(state.drafts).toEqual([]);
+  expect(state.confirmed.map(({ text }) => text)).toEqual([
+    "Professor Zhang will explain binary analysis.",
+    "张教授将讲解二进制分析。",
+  ]);
+  expect(state.confirmed[1].externalTranslation?.sourceSegmentId).toBe(
+    state.confirmed[0].id,
+  );
+});

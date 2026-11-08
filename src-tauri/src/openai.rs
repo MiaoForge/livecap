@@ -103,6 +103,7 @@ fn ends_sentence(text: &str) -> bool {
 }
 
 struct Pending {
+    boundary: bool,
     id: Option<String>,
     final_text: Option<(String, u32)>,
     start: u64,
@@ -137,6 +138,7 @@ pub struct Connection {
     socket: Socket,
     session_id: String,
     position: u64,
+    idle_quiet: usize,
     pre_roll: Vec<u8>,
     turn: Option<Turn>,
     pending: VecDeque<Pending>,
@@ -224,6 +226,7 @@ impl Connection {
             socket,
             session_id,
             position: 0,
+            idle_quiet: 0,
             pre_roll: Vec::new(),
             turn: None,
             pending: VecDeque::new(),
@@ -280,11 +283,17 @@ impl Connection {
         self.position += samples as u64;
         if self.turn.is_none() {
             if !active {
+                let previous_quiet = self.idle_quiet;
+                self.idle_quiet = self.idle_quiet.saturating_add(samples);
+                if previous_quiet < QUIET_SAMPLES && self.idle_quiet >= QUIET_SAMPLES {
+                    self.commit(emit, true).await?;
+                }
                 self.pre_roll.extend_from_slice(&pcm);
                 let excess = self.pre_roll.len().saturating_sub(PRE_ROLL_BYTES);
                 self.pre_roll.drain(..excess);
                 return Ok(());
             }
+            self.idle_quiet = 0;
             let pre_roll = std::mem::take(&mut self.pre_roll);
             let pre_samples = pre_roll.len() / 2;
             if !pre_roll.is_empty() {
@@ -303,13 +312,24 @@ impl Connection {
             .as_mut()
             .is_some_and(|turn| turn.add_packet(samples, active, sentence_end))
         {
-            self.commit(emit).await?;
+            let boundary = self.turn.as_ref().is_some_and(|turn| {
+                turn.quiet >= QUIET_SAMPLES
+                    || (sentence_end && turn.quiet >= SENTENCE_QUIET_SAMPLES)
+            });
+            self.commit(emit, boundary).await?;
         }
         Ok(())
     }
 
-    async fn commit(&mut self, emit: &impl Fn(StreamEvent)) -> Result<(), String> {
+    async fn commit(&mut self, emit: &impl Fn(StreamEvent), boundary: bool) -> Result<(), String> {
         let Some(turn) = self.turn.take() else {
+            if boundary {
+                if let Some(last) = self.pending.back_mut() {
+                    last.boundary = true;
+                } else {
+                    emit(StreamEvent::TranscriptBoundary);
+                }
+            }
             return Ok(());
         };
         if self.pending.len() >= MAX_PENDING {
@@ -322,6 +342,7 @@ impl Connection {
         self.send(json!({"type": "input_audio_buffer.commit"}))
             .await?;
         self.pending.push_back(Pending {
+            boundary,
             id: None,
             final_text: None,
             start: turn.start,
@@ -413,6 +434,7 @@ impl Connection {
                     let mut turn = self.pending.pop_front().expect("front checked");
                     let id = turn.id.take().expect("completion matched by item ID");
                     let (text, revision) = turn.final_text.take().expect("completion checked");
+                    let boundary = turn.boundary;
                     emit(StreamEvent::Transcript(transcript(
                         &self.session_id,
                         id,
@@ -420,6 +442,9 @@ impl Connection {
                         revision,
                         Some(turn),
                     )));
+                    if boundary {
+                        emit(StreamEvent::TranscriptBoundary);
+                    }
                 }
             }
             _ => (),
@@ -431,7 +456,7 @@ impl Connection {
         match packet {
             Packet::Pcm(pcm) => self.packet(pcm, emit).await,
             Packet::Paused => {
-                self.commit(emit).await?;
+                self.commit(emit, true).await?;
                 self.pre_roll.clear();
                 Ok(())
             }
@@ -482,7 +507,7 @@ impl Connection {
             while let Some(packet) = packets.recv().await {
                 self.ingest(packet, emit).await?;
             }
-            self.commit(emit).await?;
+            self.commit(emit, true).await?;
             while !self.pending.is_empty() {
                 let response = parse(self.socket.next().await)?;
                 self.receive(response, emit)?;

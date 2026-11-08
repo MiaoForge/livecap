@@ -629,7 +629,8 @@ async fn run(
                 }
             }
             Connection::Openai(socket, translator) => {
-                let forward = |event| {
+                let segments = Mutex::new(crate::transcript_segments::SentenceSegments::default());
+                let publish = |event| {
                     archive.meter.record(&event);
                     archive.observe(&event);
                     emit(app, &event);
@@ -639,11 +640,28 @@ async fn run(
                         emit(app, &warning);
                     }
                 };
-                if listening {
+                let forward = |event| {
+                    let events = segments
+                        .lock()
+                        .expect("capture worker owns segments")
+                        .push(event);
+                    for event in events {
+                        publish(event);
+                    }
+                };
+                let result = if listening {
                     socket.stream(&mut packets, &mut stopped, &forward).await
                 } else {
                     socket.finish(&mut packets, &forward).await
+                };
+                for event in segments
+                    .lock()
+                    .expect("capture worker owns segments")
+                    .finish()
+                {
+                    publish(event);
                 }
+                result
             }
         },
         Err(error) => Err(error),
@@ -682,7 +700,8 @@ fn emit(app: &AppHandle, event: &StreamEvent) {
         StreamEvent::TranslationWarning(warning) => {
             let _ = app.emit("translation-warning", warning);
         }
-        StreamEvent::AudioSent(_)
+        StreamEvent::TranscriptBoundary
+        | StreamEvent::AudioSent(_)
         | StreamEvent::TranslationStarted
         | StreamEvent::TranslationUsage(_) => {}
     }

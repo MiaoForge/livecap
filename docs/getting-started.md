@@ -40,6 +40,8 @@ Livecap stores settings, terminology, meeting records, and usage in `%LOCALAPPDA
 
 On macOS, local data is stored in `~/Library/Application Support/com.chenmiaoi.livecap/`, with the same database and recordings layout. See [macOS setup](macos.md) for capture permission instructions.
 
+OpenAI audio is submitted in bounded batches, but those batches are not treated as paragraph boundaries. Completed sentences are finalized separately; unfinished text carries into the next batch so its final translation can include the continuation. Live draft translations can still change. Long gaps, speaker changes, session end, or a safety limit (1,600 characters or 60 seconds) finalize an unfinished passage. Sentence timestamps within an audio batch are estimates. Existing records keep their saved segmentation and translations.
+
 The app keeps a single target language per session. Existing target-language preferences are preserved when upgrading; the old source-language selection is discarded. OpenAI live transcription does not report detected language labels, so those labels remain unset rather than being inferred from settings. Soniox can return detected language metadata. Speech already in the target language is retained.
 
 Pausing keeps the provider connection open to preserve the session. Soniox still charges for the full connection duration, including pauses; see its [connection keepalive documentation](https://docs.soniox.com/stt/rt/connection-keepalive). Pausing is available after a meeting starts listening; subtitle sessions do not expose meeting pause controls.

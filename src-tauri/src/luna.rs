@@ -471,6 +471,105 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn semantic_segments_reach_translation_with_complete_source_and_matching_ids() {
+        use crate::transcript_segments::SentenceSegments;
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut sources = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut packet = [0; 4096];
+                let (header_end, length) = loop {
+                    let n = socket.read(&mut packet).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&packet[..n]);
+                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length: "))
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        break (end + 4, length);
+                    }
+                };
+                while bytes.len() < header_end + length {
+                    let n = socket.read(&mut packet).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&packet[..n]);
+                }
+                let request: Value =
+                    serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap();
+                let input: Value =
+                    serde_json::from_str(request["input"].as_str().unwrap()).unwrap();
+                assert_eq!(input["is_final"], true);
+                sources.push(input["source"].as_str().unwrap().to_owned());
+                let body = json!({"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"完整译文"}]}]}).to_string();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }
+            sources
+        });
+        let emitted = Arc::new(Mutex::new(Vec::new()));
+        let received = emitted.clone();
+        let worker = Worker::start(
+            &endpoint,
+            HeaderValue::from_static("Bearer test"),
+            vec![],
+            Arc::new(SessionTerms::new("session".into(), &[], |_| {})),
+            None,
+            Language::Zh,
+            move |event| {
+                if let StreamEvent::Transcript(event) = event {
+                    received.lock().unwrap().extend(event.tokens);
+                }
+            },
+        )
+        .unwrap();
+        let mut segments = SentenceSegments::default();
+        let mut originals = Vec::new();
+        for (text, start, end) in [
+            ("Professor Zhang will", 0, 15000),
+            ("explain binary analysis. Next we", 15000, 30000),
+        ] {
+            let event = StreamEvent::Transcript(serde_json::from_value(json!({"session_id":"session","finished":false,"tokens":[{
+                "text":text,"is_final":true,"translation_status":"original","source_segment_id":format!("batch-{start}"),"revision":1,"start_ms":start,"end_ms":end
+            }]})).unwrap());
+            for event in segments.push(event) {
+                if let StreamEvent::Transcript(source) = &event {
+                    originals.extend(source.tokens.iter().filter(|t| t.is_final).cloned());
+                }
+                worker.submit(&event).unwrap();
+            }
+        }
+        for event in segments.finish() {
+            if let StreamEvent::Transcript(source) = &event {
+                originals.extend(source.tokens.clone());
+            }
+            worker.submit(&event).unwrap();
+        }
+        worker.finish().await.unwrap();
+        assert_eq!(
+            server.await.unwrap(),
+            ["Professor Zhang will explain binary analysis.", "Next we"]
+        );
+        let translations = emitted.lock().unwrap();
+        assert_eq!(translations.len(), originals.len());
+        for (translation, source) in translations.iter().zip(originals) {
+            assert_eq!(translation.source_segment_id, source.source_segment_id);
+            assert_eq!(translation.revision, source.revision);
+            assert!(translation.is_final);
+            assert_eq!(translation.text, "完整译文");
+        }
+    }
+
     #[test]
     fn translation_detects_source_and_uses_selected_target() {
         let target_language = Language::Ja;
