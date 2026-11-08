@@ -12,7 +12,7 @@ pub use macos::{capture, request_access};
 compile_error!("Livecap supports Windows and macOS.");
 
 #[cfg(target_os = "windows")]
-pub fn request_access() -> Result<(), &'static str> {
+pub fn request_access(_include_microphone: bool) -> Result<(), &'static str> {
     Ok(())
 }
 

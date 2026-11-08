@@ -22,7 +22,7 @@ Livecap 翻译电脑正在播放的声音。看视频或参会时，可以在可
 - **知识空间**从公开资料整理领域术语，供后续会话复用。
 - **用量**显示字幕、会议和知识准备的预计费用。
 
-Livecap 使用你配置的 OpenAI 或 Soniox API Key，并把密钥保存在 Windows 凭据管理器或 macOS 钥匙串中。所选服务会收到当前播放设备的声音，包括其他应用和通知音。[使用指南](docs/getting-started.md)
+Livecap 使用你配置的 OpenAI 或 Soniox API Key，并把密钥保存在 Windows 凭据管理器或 macOS 钥匙串中。所选服务会收到当前播放设备的声音，包括其他应用和通知音。会议默认还会采集系统默认麦克风，可在开始前关闭“同时录制麦克风”。[使用指南](docs/getting-started.md)
 
 ## 获取 Livecap
 

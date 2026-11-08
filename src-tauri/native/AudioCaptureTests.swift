@@ -3,10 +3,12 @@ import AVFoundation
 private final class Packets {
     var samples: [Int16] = []
     var reject = false
+    var sources: Set<Int32> = []
 }
 
-private func receive(_ context: UnsafeMutableRawPointer, _ bytes: UnsafePointer<UInt8>, _ count: Int) -> Int32 {
+private func receive(_ context: UnsafeMutableRawPointer, _ source: Int32, _ bytes: UnsafePointer<UInt8>, _ count: Int) -> Int32 {
     let packets = Unmanaged<Packets>.fromOpaque(context).takeUnretainedValue()
+    packets.sources.insert(source)
     for offset in stride(from: 0, to: count, by: 2) {
         packets.samples.append(Int16(bitPattern: UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8))
     }
@@ -20,7 +22,8 @@ struct AudioCaptureTests {
             for channels: AVAudioChannelCount in [1, 2] {
                 let packets = Packets()
                 let context = Unmanaged.passUnretained(packets).toOpaque()
-                let output = AudioOutput(context: context, rate: rate, packet: receive)
+                let source: Int32 = channels == 1 ? 0 : 1
+                let output = AudioOutput(context: context, rate: rate, packet: receive, source: source)
                 let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: channels, interleaved: false)!
                 let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
                 input.frameLength = 4800
@@ -44,6 +47,7 @@ struct AudioCaptureTests {
                 precondition(CMSampleBufferSetDataReady(sample!) == noErr)
                 for _ in 0..<10 { output.process(sample!) }
                 precondition(!output.failed, "Conversion failed")
+                precondition(packets.sources == [source], "System and microphone source labels must be preserved")
                 precondition(abs(Double(packets.samples.count) - rate) < rate * 0.02, "Incorrect output duration: \(packets.samples.count) samples at \(rate) Hz, \(channels) channels")
                 let peak = packets.samples.map { abs(Int($0)) }.max()!
                 precondition(peak > 12000 && peak < 20000, "PCM16 amplitude is incorrect")

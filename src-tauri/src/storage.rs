@@ -24,6 +24,7 @@ pub struct Settings {
     pub font_size: u32,
     pub always_on_top: bool,
     pub target_language: Language,
+    pub meeting_microphone: bool,
     pub caption_mode: CaptionMode,
     pub translation_first: bool,
     pub caption_theme: CaptionTheme,
@@ -59,6 +60,7 @@ impl Default for Settings {
             font_size: 24,
             always_on_top: true,
             target_language: Language::Zh,
+            meeting_microphone: true,
             caption_mode: CaptionMode::Both,
             translation_first: true,
             caption_theme: CaptionTheme::Dark,
@@ -67,6 +69,12 @@ impl Default for Settings {
             auto_learn_meeting_terms: false,
             auto_generate_meeting_notes: true,
         }
+    }
+}
+
+impl Settings {
+    pub fn captures_microphone(&self, mode: SessionMode) -> bool {
+        mode == SessionMode::Meeting && self.meeting_microphone
     }
 }
 
@@ -937,6 +945,19 @@ mod tests {
     use crate::knowledge::{Generation, sample_cache};
 
     #[test]
+    fn microphone_is_meeting_only_and_opt_out_survives_reload() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        let mut settings = Settings::default();
+        assert!(settings.captures_microphone(SessionMode::Meeting));
+        assert!(!settings.captures_microphone(SessionMode::Subtitle));
+        settings.meeting_microphone = false;
+        storage.save_settings(settings).unwrap();
+        let settings = storage.load_settings().unwrap();
+        assert!(!settings.captures_microphone(SessionMode::Meeting));
+        assert!(!settings.captures_microphone(SessionMode::Subtitle));
+    }
+
+    #[test]
     fn migrates_old_source_selection_without_changing_target_or_preferences() {
         let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
         let settings = decode_settings(
@@ -959,6 +980,7 @@ mod tests {
         let initial = serde_json::to_value(old).unwrap();
         assert!(initial.get("sourceLanguage").is_none());
         assert_eq!(initial["targetLanguage"], "zh");
+        assert_eq!(initial["meetingMicrophone"], true);
         assert_eq!(initial["captionMode"], "both");
         assert_eq!(initial["translationFirst"], true);
         assert_eq!(initial["captionTheme"], "dark");

@@ -781,12 +781,30 @@ function Workspace() {
                     <div>
                       <h2>
                         {mode === "subtitle" ? "字幕翻译" : "会议翻译"} ·
-                        系统音频
+                        {mode === "meeting" && settings.meetingMicrophone
+                          ? "系统声音 + 麦克风"
+                          : "系统音频"}
                       </h2>
                       <p>
                         自动识别 → {languageName(settings.targetLanguage)} ·{" "}
                         {settings.provider === "openai" ? "OpenAI" : "Soniox"}
                       </p>
+                      {mode === "meeting" && (
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={settings.meetingMicrophone}
+                            disabled={active || busy}
+                            onChange={(event) =>
+                              setSettings({
+                                ...settings,
+                                meetingMicrophone: event.target.checked,
+                              })
+                            }
+                          />
+                          同时录制麦克风
+                        </label>
+                      )}
                     </div>
                     <button
                       className="primary"
@@ -890,6 +908,11 @@ function Workspace() {
                           } as Record<string, string>
                         )[status.state]
                       }
+                    </span>
+                    <span>
+                      {mode === "meeting" && settings.meetingMicrophone
+                        ? "系统声音 + 麦克风"
+                        : "系统音频"}
                     </span>
                     <span>预计费用 {money(usage?.estimated_usd)}</span>
                   </div>
@@ -1007,7 +1030,9 @@ function Workspace() {
           close={() => setConsent(false)}
         >
           <p>
-            当前播放设备的声音会发送至{" "}
+            {mode === "meeting" && settings.meetingMicrophone
+              ? "系统声音和麦克风声音会发送至"
+              : "当前播放设备的声音会发送至"}{" "}
             {settings.provider === "openai"
               ? "OpenAI，转录文字由 Luna 翻译"
               : "Soniox"}
@@ -1029,6 +1054,9 @@ function Workspace() {
               ? " 会后会自动查证并补充术语。"
               : ""}
             采集包含同设备上的通知与其他声音。
+            {mode === "meeting" &&
+              settings.meetingMicrophone &&
+              "为减少扬声器声音被麦克风重复拾取，建议佩戴耳机。"}
           </p>
           {mode === "meeting" && (
             <label className="edit-label">

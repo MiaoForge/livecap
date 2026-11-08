@@ -1,4 +1,7 @@
-use crate::audio_feed::AudioFeed;
+use crate::{
+    audio_feed::AudioFeed,
+    audio_mixer::{Mixer, Source},
+};
 use std::{
     ptr,
     sync::{
@@ -13,7 +16,8 @@ use windows::Win32::{
     Media::Audio::{
         AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
         AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioCaptureClient,
-        IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX, eMultimedia, eRender,
+        IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX, eCapture, eMultimedia,
+        eRender,
     },
     System::Com::{
         CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -40,13 +44,13 @@ impl Drop for ComApartment {
     }
 }
 
-struct Loopback {
+struct CaptureDevice {
     client: IAudioClient,
     capture: IAudioCaptureClient,
 }
 
-impl Loopback {
-    fn start(sample_rate: u32) -> windows::core::Result<Self> {
+impl CaptureDevice {
+    fn start(sample_rate: u32, source: Source) -> windows::core::Result<Self> {
         let format = WAVEFORMATEX {
             wFormatTag: 1, // WAVE_FORMAT_PCM
             nChannels: 1,
@@ -60,12 +64,22 @@ impl Loopback {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
+            let device = enumerator.GetDefaultAudioEndpoint(
+                if source == Source::Microphone {
+                    eCapture
+                } else {
+                    eRender
+                },
+                eMultimedia,
+            )?;
             let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
             client.Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_LOOPBACK
-                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                (if source == Source::System {
+                    AUDCLNT_STREAMFLAGS_LOOPBACK
+                } else {
+                    0
+                }) | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
                     | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                 1_000_000, // 100 ms in 100 ns units
                 0,
@@ -104,7 +118,7 @@ impl Loopback {
     }
 }
 
-impl Drop for Loopback {
+impl Drop for CaptureDevice {
     fn drop(&mut self) {
         let _ = unsafe { self.client.Stop() };
     }
@@ -112,6 +126,7 @@ impl Drop for Loopback {
 
 pub fn capture(
     sample_rate: u32,
+    include_microphone: bool,
     stop: Arc<AtomicBool>,
     ready: oneshot::Sender<()>,
     audio: Arc<AudioFeed>,
@@ -121,13 +136,45 @@ pub fn capture(
         return Ok(());
     }
     let _apartment = ComApartment::new().map_err(|_| DEVICE_ERROR)?;
-    let loopback = Loopback::start(sample_rate).map_err(|_| DEVICE_ERROR)?;
+    let loopback = CaptureDevice::start(sample_rate, Source::System).map_err(|_| DEVICE_ERROR)?;
+    let microphone = if include_microphone {
+        Some(CaptureDevice::start(sample_rate, Source::Microphone).map_err(|_| "无法采集麦克风音频。请检查 Windows 麦克风隐私权限与默认输入设备；也可关闭会议的麦克风选项。")?)
+    } else {
+        None
+    };
+    let mut mixer = include_microphone.then(|| Mixer::new(sample_rate));
+    let mut next_mix = Instant::now() + Duration::from_millis(20);
     if ready.send(()).is_err() {
         return Ok(());
     }
     let mut last_packet = Instant::now();
     let idle_period = Duration::from_millis(IDLE_PACKET_MS);
     while !stop.load(Ordering::Acquire) {
+        if let (Some(microphone), Some(mixer)) = (&microphone, mixer.as_mut()) {
+            let (paused, generation) = audio.capture_state()?;
+            mixer.synchronize(generation);
+            while let Some(packet) = loopback.next_packet().map_err(|_| DEVICE_ERROR)? {
+                if !paused {
+                    mixer.push(Source::System, &packet)?;
+                }
+            }
+            while let Some(packet) = microphone
+                .next_packet()
+                .map_err(|_| "麦克风音频采集已中断，请检查输入设备。")?
+            {
+                if !paused {
+                    mixer.push(Source::Microphone, &packet)?;
+                }
+            }
+            if Instant::now() >= next_mix {
+                if !audio.forward_mixed(&mixer.render(), mixer.generation(), &mut on_packet)? {
+                    break;
+                }
+                next_mix += Duration::from_millis(20);
+            }
+            thread::sleep(Duration::from_millis(5));
+            continue;
+        }
         let packet = match loopback.next_packet().map_err(|_| DEVICE_ERROR)? {
             Some(packet) => packet,
             // An idle output device may stop delivering packets. Preserve long gaps

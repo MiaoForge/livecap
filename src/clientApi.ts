@@ -9,6 +9,7 @@ export type Settings = {
   fontSize: number;
   alwaysOnTop: boolean;
   targetLanguage: string;
+  meetingMicrophone: boolean;
   captionMode: "both" | "translation" | "original";
   translationFirst: boolean;
   captionTheme: "dark" | "light";
@@ -97,6 +98,7 @@ export const defaults: Settings = {
   fontSize: 24,
   alwaysOnTop: true,
   targetLanguage: "zh",
+  meetingMicrophone: true,
   captionMode: "both",
   translationFirst: true,
   captionTheme: "dark",

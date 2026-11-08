@@ -6,9 +6,11 @@ Build and launch Livecap using the [quick start](../README.md#quick-start). Comp
 
 1. Choose **Subtitle** for live captions or **Meeting** for a replayable record.
 2. Choose **Translate to** under **Settings → Language & Translation**. Input speech is detected automatically, including language changes within a session; available languages and recognition quality depend on the provider.
-3. Start the session and review the audio transmission notice. Livecap sends audio from the system audio capture stream to the selected provider. Restart the session after changing playback devices.
+3. Start the session and review the audio transmission notice. Livecap sends system playback audio to the selected provider. Meetings enable **Record microphone** by default; turn it off on the meeting card to capture only system audio. Subtitle mode never opens the microphone. Restart the session after changing playback or input devices.
 4. In Meeting mode, use **Pause meeting** / **Continue meeting** in the app or caption window. Pausing discards new audio before recording and upload; already submitted audio can still return final text. Continuing appends to the same meeting record, with pause time excluded from both recording and transcript positions. You can also stop a paused meeting.
 5. Stop the session from the app or the caption window. Closing the caption window hides it.
+
+With microphone capture enabled, your voice and system playback are mixed into the same mono stream for transcription and meeting replay. Use headphones to reduce sound from the speakers being picked up again by the microphone. Pause discards both sources and clears pending mixed audio; continuing stays in the same record without replaying buffered audio from the pause.
 
 Subtitle mode clears audio and text when the session ends and retains usage totals. Meeting mode saves audio and transcript data locally. The record view supports replay, correction, export, and source-linked notes. The OpenAI route can generate meeting notes automatically when enabled.
 

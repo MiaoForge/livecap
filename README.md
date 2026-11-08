@@ -24,7 +24,7 @@ _The Livecap workspace in Simplified Chinese._
 - **Knowledge Space** prepares terminology from public sources and reuses it in later sessions.
 - **Usage** shows estimated provider costs for captions, meetings, and knowledge preparation.
 
-Livecap uses your OpenAI or Soniox API key and stores it in Windows Credential Manager or macOS Keychain. The selected provider receives audio from the active playback device, including sounds from other apps and notifications. See [getting started](docs/getting-started.md) for setup and local data details.
+Livecap uses your OpenAI or Soniox API key and stores it in Windows Credential Manager or macOS Keychain. The selected provider receives system playback audio, including sounds from other apps and notifications. Meetings also capture the default microphone unless you turn off **Record microphone** before starting. See [getting started](docs/getting-started.md) for setup and local data details.
 
 ## Get Livecap
 

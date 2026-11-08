@@ -4,5 +4,6 @@ output_dir=$(mktemp -d)
 trap 'rm -rf "$output_dir"' EXIT
 xcrun swiftc -swift-version 5 -parse-as-library \
   src-tauri/native/AudioCapture.swift src-tauri/native/AudioCaptureProbe.swift \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$PWD/src-tauri/Info.plist" \
   -o "$output_dir/audio-probe"
 "$output_dir/audio-probe" "$@"

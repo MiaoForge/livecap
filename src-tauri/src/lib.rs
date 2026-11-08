@@ -1,5 +1,6 @@
 mod audio;
 mod audio_feed;
+mod audio_mixer;
 mod credentials;
 mod knowledge;
 mod knowledge_documents;
@@ -78,7 +79,7 @@ fn delete_api_key(credentials: State<'_, Credentials>, provider: Provider) -> Re
 }
 
 #[tauri::command]
-fn start_session(
+async fn start_session(
     app: AppHandle,
     storage: State<'_, Storage>,
     consent: bool,
@@ -116,7 +117,10 @@ fn start_session(
         return Err("会议主题须为不超过 160 个字符的单行文字。".into());
     }
     let meeting_topic = (mode == SessionMode::Meeting).then_some(topic);
-    audio::request_access()?;
+    let include_microphone = settings.captures_microphone(mode);
+    tauri::async_runtime::spawn_blocking(move || audio::request_access(include_microphone))
+        .await
+        .map_err(|_| "无法请求音频采集权限。")??;
     app.state::<Sessions>().start(
         app.clone(),
         settings,

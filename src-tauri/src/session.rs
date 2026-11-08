@@ -59,6 +59,7 @@ impl Active {
 }
 
 struct RunConfig {
+    mode: SessionMode,
     settings: Settings,
     terms: Arc<SessionTerms>,
     asr_terms: Vec<String>,
@@ -211,6 +212,7 @@ impl Sessions {
                 audio: None,
             };
             let config = RunConfig {
+                mode,
                 settings,
                 terms,
                 asr_terms,
@@ -404,6 +406,7 @@ async fn run(
     archive: &mut Archive,
 ) -> Result<(), String> {
     let RunConfig {
+        mode,
         mut settings,
         terms,
         asr_terms,
@@ -413,6 +416,7 @@ async fn run(
     } = config;
     let session_id = terms.session_id.clone();
     let target_language = settings.target_language;
+    let include_microphone = settings.captures_microphone(mode);
     // Both variants own a single similarly sized WebSocket.
     #[allow(clippy::large_enum_variant)]
     enum Connection {
@@ -476,12 +480,19 @@ async fn run(
             .as_deref()
             .map(|directory| WavWriter::create(directory, sample_rate))
             .transpose()?;
-        let outcome = audio::capture(sample_rate, capture_stop, ready, audio, |packet| {
-            if let Some(writer) = writer.as_mut() {
-                writer.append(packet)?;
-            }
-            Ok(())
-        });
+        let outcome = audio::capture(
+            sample_rate,
+            include_microphone,
+            capture_stop,
+            ready,
+            audio,
+            |packet| {
+                if let Some(writer) = writer.as_mut() {
+                    writer.append(packet)?;
+                }
+                Ok(())
+            },
+        );
         let artifact = writer.map(WavWriter::finish).transpose()?.flatten();
         Ok::<_, &'static str>((artifact, outcome))
     });
