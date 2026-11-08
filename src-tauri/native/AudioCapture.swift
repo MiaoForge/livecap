@@ -6,12 +6,60 @@ private final class PermissionReply: @unchecked Sendable {
     let completed = DispatchSemaphore(value: 0)
     // The semaphore orders the completion write before the worker's read.
     var granted = false
+    var result: Int32 = 1
+}
+
+// The probe discards packets locally and never forwards or stores their contents.
+private final class ProbeOutput: NSObject, SCStreamOutput {
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {}
+}
+
+// A successful stream start can confirm access when Core Graphics reports a
+// stale authorization state.
+private func probeSystemAudioAccess() -> Int32 {
+    let reply = PermissionReply()
+    Task {
+        defer { reply.completed.signal() }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first else { reply.result = 3; return }
+            let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+            let configuration = SCStreamConfiguration()
+            configuration.width = 2
+            configuration.height = 2
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            configuration.capturesAudio = true
+            configuration.sampleRate = 48000
+            configuration.channelCount = 1
+            let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
+            let output = ProbeOutput()
+            try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: DispatchQueue(label: "com.chenmiaoi.livecap.audio-probe"))
+            defer { try? stream.removeStreamOutput(output, type: .audio) }
+            try await stream.startCapture()
+            try await stream.stopCapture()
+            reply.result = 0
+        } catch {
+            reply.result = captureFailureCode(error) == 4 ? 1 : 3
+        }
+    }
+    reply.completed.wait()
+    return reply.result
+}
+
+func resolveSystemAudioAccess(preflight: () -> Bool, request: () -> Bool, probe: () -> Int32) -> Int32 {
+    if preflight() || request() { return 0 }
+    return probe()
 }
 
 // Called on a blocking worker so the app remains responsive to privacy prompts.
 @_cdecl("livecap_request_audio_access")
 func requestAudioAccess(_ includeMicrophone: Int32) -> Int32 {
-    guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { return 1 }
+    let access = resolveSystemAudioAccess(
+        preflight: { CGPreflightScreenCaptureAccess() },
+        request: { CGRequestScreenCaptureAccess() },
+        probe: { probeSystemAudioAccess() }
+    )
+    guard access == 0 else { return access }
     guard includeMicrophone != 0 else { return 0 }
     switch AVCaptureDevice.authorizationStatus(for: .audio) {
     case .authorized: return 0
@@ -25,6 +73,12 @@ func requestAudioAccess(_ includeMicrophone: Int32) -> Int32 {
         return reply.granted ? 0 : 2
     default: return 2
     }
+}
+
+// Only an explicit ScreenCaptureKit denial proves that capture was refused.
+func captureFailureCode(_ error: Error) -> Int32 {
+    let failure = error as NSError
+    return failure.domain == SCStreamErrorDomain && failure.code == SCStreamError.userDeclined.rawValue ? 4 : 1
 }
 
 // Source 0: system PCM; 1: microphone PCM; 2: a 20 ms mixer-clock tick.
@@ -212,7 +266,7 @@ func captureAudio(_ rate: UInt32, _ includeMicrophone: Int32, _ context: UnsafeM
             if output.queue.sync(execute: { output.failed }) { result = 2 }
             if output.queue.sync(execute: { microphone.failed }) { result = 3 }
         } catch {
-            if result == 0 { result = 1 }
+            if result == 0 { result = captureFailureCode(error) }
         }
     }
     done.wait()

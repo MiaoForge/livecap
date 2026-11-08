@@ -1,4 +1,5 @@
 import AVFoundation
+import ScreenCaptureKit
 
 private final class Packets {
     var samples: [Int16] = []
@@ -18,6 +19,20 @@ private func receive(_ context: UnsafeMutableRawPointer, _ source: Int32, _ byte
 @main
 struct AudioCaptureTests {
     static func main() {
+        precondition(captureFailureCode(NSError(domain: SCStreamErrorDomain, code: SCStreamError.userDeclined.rawValue)) == 4)
+        precondition(captureFailureCode(NSError(domain: SCStreamErrorDomain, code: SCStreamError.failedToStart.rawValue)) == 1)
+        precondition(captureFailureCode(NSError(domain: "other", code: SCStreamError.userDeclined.rawValue)) == 1)
+
+        var probes = 0
+        let probe: () -> Int32 = { probes += 1; return 0 }
+        precondition(resolveSystemAudioAccess(preflight: { true }, request: { false }, probe: probe) == 0)
+        precondition(resolveSystemAudioAccess(preflight: { false }, request: { true }, probe: probe) == 0)
+        precondition(probes == 0)
+        precondition(resolveSystemAudioAccess(preflight: { false }, request: { false }, probe: probe) == 0)
+        precondition(probes == 1)
+        precondition(resolveSystemAudioAccess(preflight: { false }, request: { false }, probe: { 1 }) == 1)
+        precondition(resolveSystemAudioAccess(preflight: { false }, request: { false }, probe: { 3 }) == 3)
+
         for rate in [16000.0, 24000.0] {
             for channels: AVAudioChannelCount in [1, 2] {
                 let packets = Packets()

@@ -8,7 +8,10 @@ use std::sync::{
 };
 use tokio::sync::oneshot;
 
-const CAPTURE_ERROR: &str = "无法采集 macOS 系统音频。请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 Livecap，然后重新启动应用。";
+const CAPTURE_ERROR: &str =
+    "无法启动或继续采集 macOS 系统音频。请检查音频输出设备，并重新启动 Livecap 后重试。";
+const CAPTURE_DENIED: &str =
+    "macOS 拒绝了屏幕与系统音频采集。请检查系统设置中的 Livecap 权限，然后完全退出并重新打开应用。";
 
 type PacketCallback = unsafe extern "C" fn(*mut std::ffi::c_void, i32, *const u8, usize) -> i32;
 type StateCallback = unsafe extern "C" fn(*mut std::ffi::c_void) -> i32;
@@ -28,6 +31,7 @@ unsafe extern "C" {
 pub fn request_access(include_microphone: bool) -> Result<(), &'static str> {
     match unsafe { livecap_request_audio_access(i32::from(include_microphone)) } {
         0 => Ok(()),
+        3 => Err(CAPTURE_ERROR),
         2 => Err(
             "macOS 尚未允许麦克风采集。请在系统设置 → 隐私与安全性 → 麦克风中允许 Livecap 或启动开发版的终端，然后完全退出并重新打开应用；也可关闭会议的麦克风选项，仅录制系统声音。",
         ),
@@ -161,6 +165,8 @@ pub fn capture(
     } else if result != 0 && !state.finished && !state.stop.load(Ordering::Acquire) {
         Err(if result == 3 {
             "无法采集麦克风音频。请检查麦克风权限、系统默认输入设备及是否被其他应用占用；也可关闭会议的麦克风选项。"
+        } else if result == 4 {
+            CAPTURE_DENIED
         } else {
             CAPTURE_ERROR
         })
