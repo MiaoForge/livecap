@@ -30,6 +30,7 @@ import type {
   UsageEntry,
   RecordSummary,
   RecordDetail,
+  LiveSummary,
   Knowledge,
   KnowledgeUsage,
   KnowledgeUsageEntry,
@@ -42,6 +43,7 @@ import {
 import type { CaptionState, TranscriptFrame } from "./captions";
 import { selectLiveCaptions } from "./captionPresentation";
 import "./Client.css";
+import { LiveSession } from "./LiveSession";
 import { WorkspaceNavigation } from "./WorkspaceNavigation";
 import { NotesDocument } from "./NotesDocument";
 import { MeetingDiagram } from "./MeetingDiagram";
@@ -270,6 +272,7 @@ function Workspace() {
   const active = ["connecting", "listening", "paused", "stopping"].includes(
     status.state,
   );
+  const [liveSummary, setLiveSummary] = useState<LiveSummary | null>(null);
   const [deleteRecord, setDeleteRecord] = useState<RecordSummary | null>(null);
   const [deletingRecord, setDeletingRecord] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -326,7 +329,14 @@ function Workspace() {
       listen<TranscriptFrame>("transcript", (e) =>
         setCaptions((c) => applyCaptionFrame(c, e.payload)),
       ),
-      listen<Usage>("session-usage", (e) => setUsage(e.payload)),
+      listen<Usage>("session-usage", (e) => {
+        if (e.payload.session_id === snapshotRef.current?.captions.sessionId)
+          setUsage(e.payload);
+      }),
+      listen<LiveSummary>("session-summary", (e) => {
+        if (e.payload.sessionId === snapshotRef.current?.captions.sessionId)
+          setLiveSummary(e.payload);
+      }),
       listen<{ candidates: LearnedTerm[] }>("session-terms", (e) =>
         setLearned(e.payload.candidates),
       ),
@@ -433,6 +443,7 @@ function Workspace() {
     const next = createCaptionState();
     setCaptions(next);
     setUsage(null);
+    setLiveSummary(null);
     try {
       await api("save_settings", { settings });
       await api("start_session", {
@@ -698,7 +709,9 @@ function Workspace() {
               ? "native-record-main"
               : page === "usage"
                 ? "native-usage-main"
-                : ""
+                : page === "session"
+                  ? "native-session-main"
+                  : ""
           }
         >
           {error && (
@@ -844,87 +857,22 @@ function Workspace() {
                 </>
               )}
               {page === "session" && (
-                <>
-                  <div className="heading-row">
-                    <h1>当前会话</h1>
-                    <div className="native-actions">
-                      {mode === "meeting" &&
-                        ["listening", "paused"].includes(status.state) && (
-                          <button
-                            disabled={busy}
-                            onClick={() => void pauseMeeting()}
-                          >
-                            {status.state === "paused" ? <Play /> : <Pause />}
-                            {status.state === "paused"
-                              ? "继续会议"
-                              : "暂停会议"}
-                          </button>
-                        )}
-                      <button onClick={() => void overlay().catch(fail)}>
-                        打开字幕窗
-                      </button>
-                      <button
-                        className="primary"
-                        disabled={
-                          !active || busy || status.state === "stopping"
-                        }
-                        onClick={() => void stop()}
-                      >
-                        {status.state === "stopping" ? "正在保存…" : "结束会话"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="native-session-meta">
-                    <span>
-                      ●{" "}
-                      {
-                        (
-                          {
-                            connecting: "连接中",
-                            listening:
-                              mode === "meeting"
-                                ? "实时转写 · 录音中"
-                                : "实时字幕 · 不保存",
-                            paused: "会议已暂停 · 不录音",
-                            stopping: "等待最后结果",
-                            idle: mode === "meeting" ? "已保存" : "已结束",
-                            error: "会话中断",
-                          } as Record<string, string>
-                        )[status.state]
-                      }
-                    </span>
-                    <span>
-                      {mode === "meeting" && settings.meetingMicrophone
-                        ? "系统声音 + 麦克风"
-                        : "系统音频"}
-                    </span>
-                    <span>预计费用 {money(usage?.estimated_usd)}</span>
-                  </div>
-                  {status.state === "paused" && (
-                    <p role="status">
-                      已暂停：新音频不会保存或发送，点击“继续会议”后接着录制到同一条记录。
-                      {settings.provider === "soniox" &&
-                        "Soniox 在线连接仍按连接时长计费。"}
-                    </p>
-                  )}
-                  <div className="native-caption-preview">
-                    <Captions snapshot={{ captions, status, settings, mode }} />
-                  </div>
-                  {mode === "meeting" && (
-                    <div className="native-live-transcript">
-                      {captions.confirmed.map((s) => (
-                        <p
-                          key={s.id}
-                          className={
-                            s.lane === "translation" ? "translated" : ""
-                          }
-                        >
-                          {s.text}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                </>
+                <LiveSession
+                  key={captions.sessionId}
+                  captions={captions}
+                  mode={mode}
+                  status={status.state}
+                  topic={mode === "meeting" ? meetingTopic : ""}
+                  targetLanguage={settings.targetLanguage}
+                  summaryEnabled={settings.liveMeetingSummary}
+                  summary={liveSummary}
+                  usage={usage}
+                  busy={busy}
+                  onPause={() => void pauseMeeting()}
+                  onStop={() => void stop()}
+                  onOverlay={() => void overlay().catch(fail)}
+                  onSettings={() => nav("settings")}
+                />
               )}
               {page === "records" && (
                 <>
@@ -1070,6 +1018,11 @@ function Workspace() {
             settings.provider === "openai" &&
             settings.targetLanguage === "zh"
               ? " 会后会自动查证并补充术语。"
+              : ""}
+            {mode === "meeting" &&
+            settings.liveMeetingSummary &&
+            (settings.provider === "openai" || keys.openai)
+              ? " 会中已确认的原文还会定期发送给 OpenAI，自动更新图文摘要，产生额外费用。"
               : ""}
             采集包含同设备上的通知与其他声音。
             {mode === "meeting" &&

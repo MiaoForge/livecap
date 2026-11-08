@@ -68,6 +68,8 @@ pub struct Snapshot {
 struct State {
     samples: u64,
     tokens: Tokens,
+    analysis: Option<Tokens>,
+    analysis_requested: bool,
     pending: u32,
     incomplete: bool,
     last_update: Instant,
@@ -82,7 +84,7 @@ impl State {
         let supported = provider == Provider::Openai;
         let transcription_usd = self.samples as f64 / rate as f64 / 60.0 * AUDIO_PER_MINUTE;
         let translation_usd = self.tokens.estimate();
-        Snapshot {
+        let mut snapshot = Snapshot {
             session_id: session_id.into(),
             provider,
             audio_ms: self.samples.saturating_mul(1000) / rate,
@@ -95,6 +97,18 @@ impl State {
             analysis_usd: None,
             pending_translation_requests: self.pending,
             incomplete: self.incomplete,
+        };
+        if self.analysis_requested {
+            snapshot.add_analysis(self.analysis);
+        }
+        snapshot
+    }
+
+    fn record_analysis(&mut self, tokens: Option<Tokens>) {
+        self.analysis_requested = true;
+        match tokens.and_then(|tokens| self.analysis.unwrap_or_default().add(tokens)) {
+            Some(total) => self.analysis = Some(total),
+            None => self.incomplete = true,
         }
     }
 
@@ -189,6 +203,8 @@ impl Meter {
             state: Arc::new(Mutex::new(State {
                 samples: 0,
                 tokens: Tokens::default(),
+                analysis: None,
+                analysis_requested: false,
                 pending: 0,
                 incomplete: false,
                 last_update: Instant::now(),
@@ -204,6 +220,13 @@ impl Meter {
         if let Ok(mut state) = self.state.lock()
             && state.record(event)
         {
+            self.emit(&mut state);
+        }
+    }
+
+    pub fn record_analysis(&self, tokens: Option<Tokens>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.record_analysis(tokens);
             self.emit(&mut state);
         }
     }
@@ -232,6 +255,8 @@ mod tests {
         State {
             samples: 0,
             tokens: Tokens::default(),
+            analysis: None,
+            analysis_requested: false,
             pending: 0,
             incomplete: false,
             last_update: Instant::now(),
@@ -262,6 +287,44 @@ mod tests {
         assert!((snapshot.estimated_usd.unwrap() - 0.322).abs() < 1e-12);
         assert_eq!(snapshot.pending_translation_requests, 0);
         assert!(!snapshot.incomplete);
+    }
+
+    #[test]
+    fn live_summary_usage_is_separate_from_translation_and_survives_snapshot_updates() {
+        let mut state = state();
+        let tokens = Tokens {
+            input: 1000,
+            cached: 100,
+            output: 200,
+        };
+        state.record(&StreamEvent::TranslationStarted);
+        state.record(&StreamEvent::TranslationUsage(Some(tokens)));
+        let before = state.snapshot("meeting", Provider::Openai);
+        state.record_analysis(Some(tokens));
+        state.record_analysis(Some(tokens));
+        state.record(&StreamEvent::AudioSent(24_000));
+        let after = state.snapshot("meeting", Provider::Openai);
+        assert_eq!(after.translation_usd, before.translation_usd);
+        assert_eq!(after.analysis_usd, Some(tokens.estimate() * 2.0));
+        assert_eq!(after.input_tokens, 3000);
+        assert_eq!(after.output_tokens, 600);
+        assert_eq!(after.pending_translation_requests, 0);
+        assert!(!after.incomplete);
+        assert!(
+            (after.estimated_usd.unwrap()
+                - after.transcription_usd.unwrap()
+                - after.translation_usd.unwrap()
+                - after.analysis_usd.unwrap())
+            .abs()
+                < 1e-12
+        );
+        state.record_analysis(None);
+        let partial = state.snapshot("meeting", Provider::Openai);
+        assert!(partial.incomplete);
+        assert_eq!(partial.analysis_usd, after.analysis_usd);
+        let soniox = state.snapshot("meeting", Provider::Soniox);
+        assert!(soniox.incomplete);
+        assert_eq!(soniox.estimated_usd, soniox.analysis_usd);
     }
 
     #[test]

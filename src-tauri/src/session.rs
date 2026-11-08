@@ -3,8 +3,13 @@ use crate::{
     audio_feed::{AudioFeed, Packet},
     credentials::Credentials,
     knowledge::{Generation, KnowledgeCache, merge_asr_terms},
-    knowledge_generate, luna, openai,
-    records::{AudioArtifact, NewRecord, Recorder, RecordingsDirectory, SessionMode, WavWriter},
+    knowledge_generate,
+    live_summary::LiveSummary,
+    luna, openai,
+    records::{
+        AudioArtifact, NewRecord, RecordInsights, Recorder, RecordingsDirectory, SessionMode,
+        WavWriter,
+    },
     soniox,
     storage::{Settings, Storage},
     terms::SessionTerms,
@@ -73,10 +78,14 @@ struct Archive {
     recorder: Option<Arc<Recorder>>,
     meter: Meter,
     audio: Option<AudioArtifact>,
+    summary: Option<LiveSummary>,
 }
 
 impl Archive {
     fn observe(&self, event: &StreamEvent) {
+        if let Some(summary) = &self.summary {
+            summary.observe(event);
+        }
         if let Some(recorder) = &self.recorder {
             recorder.observe(event);
         }
@@ -196,6 +205,8 @@ impl Sessions {
             let provider = settings.provider;
             let target_language = settings.target_language;
             let include_notes = settings.auto_generate_meeting_notes;
+            let live_summary_enabled =
+                mode == SessionMode::Meeting && settings.live_meeting_summary;
             let can_summarize = mode == SessionMode::Meeting
                 && (provider == Provider::Openai
                     || app
@@ -210,6 +221,45 @@ impl Sessions {
                 recorder: (mode == SessionMode::Meeting).then(|| Arc::new(Recorder::default())),
                 meter: Meter::new(app.clone(), provider, &terms.session_id),
                 audio: None,
+                summary: None,
+            };
+            let summary_task = if live_summary_enabled {
+                let summary_app = app.clone();
+                let summary = LiveSummary::new(&terms.session_id, move |view| {
+                    let _ = summary_app.emit("session-summary", view);
+                });
+                let analysis_auth = if provider == Provider::Openai {
+                    Some(auth.clone())
+                } else {
+                    crate::record_authorization(&app).ok()
+                };
+                archive.summary = Some(summary.clone());
+                analysis_auth
+                    .map(|analysis_auth| {
+                        let stopped = capture_stop.clone();
+                        let meter = archive.meter.clone();
+                        tauri::async_runtime::spawn(async move {
+                            summary
+                                .run(
+                                    luna::ENDPOINT,
+                                    analysis_auth,
+                                    target_language,
+                                    stopped,
+                                    move |tokens| meter.record_analysis(tokens),
+                                )
+                                .await;
+                        })
+                    })
+                    .or_else(|| {
+                        if let Some(summary) = &archive.summary {
+                            summary.unavailable(
+                                "连接 OpenAI 后可生成会中摘要。当前会议仍会正常转写和保存。",
+                            );
+                        }
+                        None
+                    })
+            } else {
+                None
             };
             let config = RunConfig {
                 mode,
@@ -220,9 +270,22 @@ impl Sessions {
                 audio,
                 packets,
             };
-            let mut result =
-                guard_session_run(run(&app, config, auth, stopped, capture_stop, &mut archive))
-                    .await;
+            let mut result = guard_session_run(run(
+                &app,
+                config,
+                auth,
+                stopped,
+                capture_stop.clone(),
+                &mut archive,
+            ))
+            .await;
+            capture_stop.store(true, Ordering::Release);
+            if let Some(task) = summary_task {
+                status(&app, "stopping", None);
+                if task.await.is_err() {
+                    archive.meter.record_analysis(None);
+                }
+            }
             archive.meter.finish(result.is_err());
             let usage = archive.meter.snapshot();
             let mut learned_from = None;
@@ -259,6 +322,42 @@ impl Sessions {
                     };
                     match app.state::<Storage>().save_record(record) {
                         Ok(id) => {
+                            if let Some(content) =
+                                archive.summary.as_ref().and_then(LiveSummary::content)
+                            {
+                                let cutoff = content
+                                    .covered_through_ms
+                                    .map(|ms| {
+                                        format!(
+                                            "（整理至 {:02}:{:02}）",
+                                            ms / 60_000,
+                                            ms / 1000 % 60
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                                let warning = if content.truncated {
+                                    "部分发言未纳入这版摘要。"
+                                } else {
+                                    ""
+                                };
+                                let summary = RecordInsights {
+                                    title: content.title,
+                                    notes: Some(format!(
+                                        "{}\n\n> 会中自动摘要{}，可能尚未包含最后的发言。{}",
+                                        content.notes, cutoff, warning
+                                    )),
+                                    timeline: content.timeline,
+                                    diagram: content.diagram,
+                                };
+                                if let Err(error) = app.state::<Storage>().save_live_record_summary(
+                                    id,
+                                    &summary,
+                                    &content.source_times,
+                                    target_language,
+                                ) {
+                                    result = Err(error);
+                                }
+                            }
                             let _ = app.emit("records-updated", serde_json::json!({ "id": id }));
                             let _ = app.emit("usage-updated", ());
                             learned_from = transcript;

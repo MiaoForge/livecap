@@ -14,6 +14,14 @@ With microphone capture enabled, your voice and system playback are mixed into t
 
 Subtitle mode clears audio and text when the session ends and retains usage totals. Meeting mode saves audio and transcript data locally. The record view supports replay, correction, export, and source-linked notes. The OpenAI route can generate meeting notes automatically when enabled.
 
+## Live meeting workspace
+
+During a meeting, the right pane shows the original transcript with speaker labels and timestamps. The left pane switches between translation and a provisional summary with key points, source links, and a relationship diagram when the conversation supports one. Each transcript pane follows new speech independently; scrolling up pauses following, and **Back to latest** resumes it.
+
+Live summaries use the OpenAI key already stored in the desktop client. They are enabled by default for meetings and can be disabled under **Settings → Knowledge and Storage** before starting. Once there is enough confirmed original speech, updates are coalesced roughly every 30 seconds; shorter passages wait longer. Silence and provisional text do not trigger requests. Updates merge earlier summarized points with new speech, so they are a compact working overview rather than a verbatim record. They incur additional model charges, included in the meeting's analysis usage. Soniox meetings require a separately configured OpenAI key for summaries.
+
+A failed update keeps the previous summary and retries with a delay. Ending the meeting stops new summary requests and lets an already submitted request complete before saving its usage. The last successful live summary is archived with its source timestamps, followed by the normal analysis of the full meeting transcript. If final analysis fails, the archived live summary remains labeled as provisional. Recordings and the full transcript are saved independently of summary success.
+
 ## Knowledge and usage
 
 Use **Knowledge Space** to prepare domain terminology. Preparation reads public sources and can incur model and search charges. The local cache stores entries, source links, and usage. A failed refresh preserves the existing cache. Automatic vocabulary focuses on spoken concepts, product names, and acronyms. Command switches, underscore-style code identifiers, and code expressions are excluded from new entries and filtered from existing caches when loaded. Explicitly saved personal vocabulary remains available.

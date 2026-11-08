@@ -88,7 +88,7 @@ pub struct RecordDetail {
     pub segment_edits: Option<BTreeMap<String, SegmentEdit>>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelinePoint {
     pub start_ms: Option<u64>,
@@ -97,7 +97,7 @@ pub struct TimelinePoint {
     pub details: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagramNode {
     pub id: String,
@@ -105,14 +105,14 @@ pub struct DiagramNode {
     pub start_ms: Option<u64>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct DiagramEdge {
     pub from: String,
     pub to: String,
     pub label: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct RecordDiagram {
     pub nodes: Vec<DiagramNode>,
     pub edges: Vec<DiagramEdge>,

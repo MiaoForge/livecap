@@ -2,15 +2,16 @@
 
 Livecap uses React and TypeScript for the interface and Rust for its Windows and macOS desktop services. The frontend invokes native commands through [clientApi.ts](../src/clientApi.ts) and receives session events from Tauri.
 
-| Area                                                                          | Responsibility                                                                  |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| [Audio](../src-tauri/src/audio.rs)                                            | Captures system audio and optional meeting microphone audio in the native layer |
-| [Session](../src-tauri/src/session.rs)                                        | Coordinates capture, provider connections, translation, and session shutdown    |
-| [OpenAI](../src-tauri/src/openai.rs) and [Soniox](../src-tauri/src/soniox.rs) | Convert provider responses into shared transcript events                        |
-| [Caption state](../src/captions.ts)                                           | Applies transcript events and updates live captions                             |
-| [Storage](../src-tauri/src/storage.rs)                                        | Stores settings, usage, knowledge, and meeting records in SQLite                |
-| [Record analysis](../src-tauri/src/record_ai.rs)                              | Builds source-linked meeting notes, timeline entries, and diagram data          |
-| [Knowledge preparation](../src-tauri/src/knowledge_generate.rs)               | Builds and validates source-backed terminology before saving the cache          |
+| Area                                                                          | Responsibility                                                                                                   |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [Audio](../src-tauri/src/audio.rs)                                            | Captures system audio and optional meeting microphone audio in the native layer                                  |
+| [Session](../src-tauri/src/session.rs)                                        | Coordinates capture, provider connections, translation, and session shutdown                                     |
+| [OpenAI](../src-tauri/src/openai.rs) and [Soniox](../src-tauri/src/soniox.rs) | Convert provider responses into shared transcript events                                                         |
+| [Caption state](../src/captions.ts)                                           | Applies transcript events and updates live captions                                                              |
+| [Storage](../src-tauri/src/storage.rs)                                        | Stores settings, usage, knowledge, and meeting records in SQLite                                                 |
+| [Live summaries](../src-tauri/src/live_summary.rs)                            | Coalesces confirmed original speech, generates incremental meeting summaries, and publishes session-scoped views |
+| [Record analysis](../src-tauri/src/record_ai.rs)                              | Builds source-linked meeting notes, timeline entries, and diagram data                                           |
+| [Knowledge preparation](../src-tauri/src/knowledge_generate.rs)               | Builds and validates source-backed terminology before saving the cache                                           |
 
 The independent caption window receives caption state from the main window. Meeting audio is written to WAV files and replayed alongside transcript segments. The application stores API keys separately through Windows Credential Manager or macOS Keychain.
 
@@ -27,3 +28,5 @@ TLS initialization explicitly selects rustls's aws-lc-rs provider before creatin
 Meeting pause boundaries share one ordered audio feed with PCM packets. The native recorder and provider therefore consume identical active audio, without inserting a silent recording gap. Pause/resume operations are serialized with packet forwarding; the active session holds only a weak reference to the feed so a stopped capture still closes the provider channel. OpenAI commits the current turn on pause and clears its pre-roll at boundaries; Soniox sends manual finalization and filters its control token from captions. Both connections use periodic keepalive messages while audio is paused.
 
 The application manages a native credentials service separately from SQLite storage. It serializes credential-store reads and caches each provider's successful result for the lifetime of the process; denied reads remain retryable. Every API consumer uses this service. Successful writes and deletes update the cache atomically with respect to concurrent reads, and cached secret allocations use zeroing on drop. The frontend can query presence, save, or delete credentials but cannot retrieve them.
+
+Live summary scheduling runs in the native session, independently of the currently visible page. It accepts only finalized original tokens from its own session and bounds the pending transcript to 16,000 characters and 256 excerpts. Each update combines previous validated timeline points with pending speech. One request runs at a time, failures retain pending material and back off, and shutdown drains in-flight analysis before usage is archived. Summary tokens are metered separately from translation. Live note citations retain their own source timestamps when archived; final record analysis replaces them only after it succeeds.

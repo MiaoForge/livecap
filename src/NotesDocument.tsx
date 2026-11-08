@@ -5,6 +5,7 @@ import { time } from "./clientApi";
 type NotesProps = {
   text: string;
   seek?: (ms: number) => void;
+  seekLabel?: string;
   sourceTimes?: readonly (number | null)[];
   plain?: boolean;
 };
@@ -14,7 +15,9 @@ type Reference = { label: string; ms?: number; source: string };
 function CitationGroup({
   references,
   seek,
+  seekLabel,
 }: {
+  seekLabel: string;
   references: Reference[];
   seek?: NotesProps["seek"];
 }) {
@@ -25,7 +28,7 @@ function CitationGroup({
       <button
         type="button"
         className="note-citation"
-        aria-label={`回听 ${reference.label}（来源 ${reference.source}）`}
+        aria-label={`${seekLabel} ${reference.label}（来源 ${reference.source}）`}
         onClick={() => seek(reference.ms!)}
       >
         {reference.label}
@@ -58,6 +61,7 @@ function CitationGroup({
 export function NotesDocument({
   text,
   seek,
+  seekLabel = "回听",
   sourceTimes,
   plain = false,
 }: NotesProps) {
@@ -68,7 +72,9 @@ export function NotesDocument({
         type="button"
         className="note-citation"
         aria-label={
-          source ? `回听 ${label}（来源 ${source}）` : `回听 ${label}`
+          source
+            ? `${seekLabel} ${label}（来源 ${source}）`
+            : `${seekLabel} ${label}`
         }
         onClick={() => seek(ms)}
       >
@@ -95,7 +101,12 @@ export function NotesDocument({
           };
         });
         return references.some((reference) => reference.ms != null) ? (
-          <CitationGroup key={i} references={references} seek={seek} />
+          <CitationGroup
+            key={i}
+            references={references}
+            seek={seek}
+            seekLabel={seekLabel}
+          />
         ) : (
           part
         );

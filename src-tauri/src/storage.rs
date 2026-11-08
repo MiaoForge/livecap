@@ -32,6 +32,7 @@ pub struct Settings {
     pub onboarding_complete: bool,
     pub auto_learn_meeting_terms: bool,
     pub auto_generate_meeting_notes: bool,
+    pub live_meeting_summary: bool,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -68,6 +69,7 @@ impl Default for Settings {
             onboarding_complete: false,
             auto_learn_meeting_terms: false,
             auto_generate_meeting_notes: true,
+            live_meeting_summary: true,
         }
     }
 }
@@ -405,6 +407,26 @@ impl Storage {
         file.ok_or("该记录没有录音。".into())
     }
 
+    pub fn save_live_record_summary(
+        &self,
+        id: i64,
+        summary: &RecordInsights,
+        source_times: &[Option<u64>],
+        language: Language,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(|_| STORAGE_ERROR)?;
+        let updated = transaction.execute(
+            "UPDATE records SET title=?2,notes=?3 WHERE id=?1 AND notes='' AND transcript_text IS NULL",
+            params![id, summary.title, summary.notes.as_deref().unwrap_or_default()],
+        ).map_err(|_| STORAGE_ERROR)?;
+        if updated != 0 {
+            write_record_insights(&transaction, id, summary, language, source_times)?;
+        }
+        transaction.commit().map_err(|_| STORAGE_ERROR)?;
+        Ok(())
+    }
+
     pub fn save_record_analysis(
         &self,
         id: i64,
@@ -444,42 +466,10 @@ impl Storage {
             ).map_err(|_| STORAGE_ERROR)?;
         }
         if let Some((previous, next, language)) = accepted {
-            if next.notes.is_some() {
-                let times = crate::record_ai::Input::from_record(previous)
-                    .map(|input| input.source_times())
-                    .unwrap_or_default();
-                let data = serde_json::to_string(&times).map_err(|_| STORAGE_ERROR)?;
-                transaction
-                    .execute(
-                        "INSERT INTO record_note_sources (record_id,data) VALUES (?1,?2)
-                     ON CONFLICT(record_id) DO UPDATE SET data=excluded.data",
-                        params![id, data],
-                    )
-                    .map_err(|_| STORAGE_ERROR)?;
-            }
-            let language = serde_json::to_string(&language).map_err(|_| STORAGE_ERROR)?;
-            let timeline = serde_json::to_string(&next.timeline).map_err(|_| STORAGE_ERROR)?;
-            transaction.execute(
-                "INSERT INTO record_insights (record_id,target_language,timeline) VALUES (?1,?2,?3)
-                 ON CONFLICT(record_id) DO UPDATE SET timeline=excluded.timeline",
-                params![id, language, timeline],
-            ).map_err(|_| STORAGE_ERROR)?;
-        }
-        if let Some((_, next, _)) = accepted {
-            if let Some(diagram) = &next.diagram {
-                let data = serde_json::to_string(diagram).map_err(|_| STORAGE_ERROR)?;
-                transaction
-                    .execute(
-                        "INSERT INTO record_diagrams (record_id,data) VALUES (?1,?2)
-                     ON CONFLICT(record_id) DO UPDATE SET data=excluded.data",
-                        params![id, data],
-                    )
-                    .map_err(|_| STORAGE_ERROR)?;
-            } else {
-                transaction
-                    .execute("DELETE FROM record_diagrams WHERE record_id=?1", [id])
-                    .map_err(|_| STORAGE_ERROR)?;
-            }
+            let times = crate::record_ai::Input::from_record(previous)
+                .map(|input| input.source_times())
+                .unwrap_or_default();
+            write_record_insights(&transaction, id, next, language, &times)?;
         }
         transaction.commit().map_err(|_| STORAGE_ERROR)?;
         if conflict {
@@ -769,6 +759,49 @@ impl Storage {
     }
 }
 
+fn write_record_insights(
+    connection: &Connection,
+    id: i64,
+    next: &RecordInsights,
+    language: Language,
+    source_times: &[Option<u64>],
+) -> Result<(), String> {
+    if next.notes.is_some() {
+        let data = serde_json::to_string(source_times).map_err(|_| STORAGE_ERROR)?;
+        connection
+            .execute(
+                "INSERT INTO record_note_sources (record_id,data) VALUES (?1,?2)
+             ON CONFLICT(record_id) DO UPDATE SET data=excluded.data",
+                params![id, data],
+            )
+            .map_err(|_| STORAGE_ERROR)?;
+    }
+    let language = serde_json::to_string(&language).map_err(|_| STORAGE_ERROR)?;
+    let timeline = serde_json::to_string(&next.timeline).map_err(|_| STORAGE_ERROR)?;
+    connection
+        .execute(
+            "INSERT INTO record_insights (record_id,target_language,timeline) VALUES (?1,?2,?3)
+         ON CONFLICT(record_id) DO UPDATE SET timeline=excluded.timeline",
+            params![id, language, timeline],
+        )
+        .map_err(|_| STORAGE_ERROR)?;
+    if let Some(diagram) = &next.diagram {
+        let data = serde_json::to_string(diagram).map_err(|_| STORAGE_ERROR)?;
+        connection
+            .execute(
+                "INSERT INTO record_diagrams (record_id,data) VALUES (?1,?2)
+             ON CONFLICT(record_id) DO UPDATE SET data=excluded.data",
+                params![id, data],
+            )
+            .map_err(|_| STORAGE_ERROR)?;
+    } else {
+        connection
+            .execute("DELETE FROM record_diagrams WHERE record_id=?1", [id])
+            .map_err(|_| STORAGE_ERROR)?;
+    }
+    Ok(())
+}
+
 fn read_record(connection: &Connection, id: i64) -> Result<RecordDetail, String> {
     let record = if id < 0 {
         let id = id.checked_neg().ok_or("记录不存在。")?;
@@ -1040,6 +1073,7 @@ mod tests {
         assert!(initial.get("sourceLanguage").is_none());
         assert_eq!(initial["targetLanguage"], "zh");
         assert_eq!(initial["meetingMicrophone"], true);
+        assert_eq!(initial["liveMeetingSummary"], true);
         assert_eq!(initial["captionMode"], "both");
         assert_eq!(initial["translationFirst"], true);
         assert_eq!(initial["captionTheme"], "dark");
@@ -1048,7 +1082,8 @@ mod tests {
         assert_eq!(initial["fontSize"], 30);
         let valid: Settings = serde_json::from_value(serde_json::json!({
             "targetLanguage":"ja", "captionMode":"translation",
-            "captionTheme":"light", "captionOpacity":0.65, "onboardingComplete":true
+            "captionTheme":"light", "captionOpacity":0.65, "onboardingComplete":true,
+            "liveMeetingSummary":false
         }))
         .unwrap();
         storage.save_settings(valid).unwrap();
@@ -1056,6 +1091,7 @@ mod tests {
         assert_eq!(saved["captionMode"], "translation");
         assert_eq!(saved["captionTheme"], "light");
         assert_eq!(saved["onboardingComplete"], true);
+        assert_eq!(saved["liveMeetingSummary"], false);
         storage
             .save_settings(Settings {
                 target_language: Language::En,
@@ -1282,6 +1318,77 @@ mod tests {
         let fresh = storage.get_record(replacement).unwrap();
         assert_eq!(fresh.summary.title, "已保存字幕");
         assert!(fresh.summary.usage.is_none());
+    }
+
+    #[test]
+    fn live_summary_archives_its_own_citation_times_without_charging_again() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        let id = storage
+            .save_record(NewRecord {
+                target_language: Language::Zh,
+                provider: Provider::Openai,
+                created_at: storage.record_timestamp().unwrap(),
+                audio: None,
+                error: None,
+                usage: Some(Snapshot::for_record_analysis(1, Some(Provider::Openai))),
+                events: Vec::new(),
+            })
+            .unwrap();
+        let before = serde_json::to_value(storage.get_record(id).unwrap().summary.usage).unwrap();
+        let insights = RecordInsights {
+            title: "In-progress summary".into(),
+            notes: Some("Point [S1]".into()),
+            timeline: vec![crate::records::TimelinePoint {
+                start_ms: Some(12_000),
+                title: "Point".into(),
+                summary: "Supported point".into(),
+                details: Vec::new(),
+            }],
+            diagram: Some(crate::records::RecordDiagram {
+                nodes: vec![crate::records::DiagramNode {
+                    id: "point".into(),
+                    label: "Point".into(),
+                    start_ms: Some(12_000),
+                }],
+                edges: Vec::new(),
+            }),
+        };
+        storage
+            .save_live_record_summary(id, &insights, &[Some(12_000)], Language::Zh)
+            .unwrap();
+        let saved = storage.get_record(id).unwrap();
+        assert_eq!(saved.notes, "Point [S1]");
+        assert_eq!(saved.note_sources, [Some(12_000)]);
+        assert_eq!(saved.timeline[0].start_ms, Some(12_000));
+        assert!(saved.diagram.is_some());
+        assert_eq!(serde_json::to_value(saved.summary.usage).unwrap(), before);
+        // A failed final analysis records only its usage and leaves the live summary intact.
+        let after_failure = storage
+            .save_record_analysis(
+                id,
+                None,
+                Some(Tokens {
+                    input: 10,
+                    cached: 0,
+                    output: 5,
+                }),
+            )
+            .unwrap();
+        assert_eq!(after_failure.notes, "Point [S1]");
+        assert_eq!(after_failure.note_sources, [Some(12_000)]);
+        storage
+            .update_record(
+                id,
+                RecordPatch {
+                    notes: Some("Manual correction".into()),
+                    ..RecordPatch::default()
+                },
+            )
+            .unwrap();
+        storage
+            .save_live_record_summary(id, &insights, &[Some(1000)], Language::Zh)
+            .unwrap();
+        assert_eq!(storage.get_record(id).unwrap().notes, "Manual correction");
     }
 
     #[test]

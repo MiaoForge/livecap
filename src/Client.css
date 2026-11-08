@@ -4805,18 +4805,6 @@ main {
   display: block;
   font-size: 12px;
 }
-.native-session-meta {
-  display: flex;
-  justify-content: space-between;
-  margin: 25px 0;
-  color: #718064;
-}
-.native-caption-preview {
-  background: #252c27;
-  color: white;
-  padding: 25px;
-  border-radius: 12px;
-}
 .native-captions {
   display: flex;
   flex-direction: column;
@@ -4836,18 +4824,6 @@ main {
 .native-captions small {
   font-size: 0.5em;
   color: #94a48e;
-}
-.native-live-transcript {
-  padding: 24px;
-  background: white;
-  border: 1px solid var(--line);
-  margin-top: 24px;
-  border-radius: 12px;
-  max-height: 45vh;
-  overflow: auto;
-}
-.native-live-transcript p {
-  margin: 10px 0;
 }
 .translated {
   color: #7a896a;
@@ -7166,4 +7142,514 @@ button.record-delete:hover {
   to {
     opacity: 1;
   }
+}
+
+/* The live workspace shares the record reader's two-pane structure. */
+.shell:has(> .native-session-main) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.native-session-main {
+  display: flex;
+  flex-direction: column;
+  max-width: none;
+  min-height: 0;
+  padding: 24px 28px 28px;
+}
+.live-session {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 20px;
+}
+.live-session-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.live-session-title {
+  min-width: 0;
+  flex: 1 1 300px;
+}
+.live-session-eyebrow {
+  color: #626e5c;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+.live-session-title h1 {
+  margin: 6px 0 10px;
+  font-size: clamp(22px, 2.2vw, 30px);
+  overflow-wrap: anywhere;
+}
+.live-session-meta,
+.live-session-meta > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.live-session-meta {
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  color: #606b59;
+  font-size: 11px;
+}
+.live-session-meta svg {
+  width: 13px;
+  height: 13px;
+}
+.session-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7d8874;
+}
+.session-state.listening i {
+  background: #537d3d;
+  box-shadow: 0 0 0 3px #537d3d13;
+}
+.session-state.paused i {
+  background: #a26b24;
+}
+.live-session-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.live-session-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 9px 13px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.live-session-actions svg {
+  width: 15px;
+  height: 15px;
+}
+.live-session-actions .session-stop {
+  background: #3c5033;
+  border-color: #3c5033;
+  color: #fff;
+}
+.live-session-actions .session-stop:hover {
+  background: #2e4026;
+}
+.session-pause-notice,
+.session-jump-notice,
+.session-summary-coverage {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #e5dfcc;
+  border-radius: 7px;
+  background: #faf8f0;
+  color: #72603b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.live-session-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+}
+.session-reading,
+.session-original {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #e0e6d9;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.session-original {
+  background: #f5f7f2;
+}
+.session-pane-heading,
+.session-pane-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.session-pane-heading {
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e7ebdf;
+  min-height: 64px;
+}
+.session-pane-heading h2 {
+  font-size: 13px;
+  font-weight: 600;
+}
+.session-pane-heading svg {
+  width: 16px;
+  height: 16px;
+  color: #637856;
+}
+.session-pane-language {
+  flex-shrink: 0;
+  color: #626e5c;
+  font-size: 11px;
+}
+.session-reading-tabs {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.session-reading-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #626e5c;
+  min-height: 36px;
+}
+.session-reading-tabs button[aria-selected="true"] {
+  background: #edf2e6;
+  color: #344b28;
+  font-weight: 600;
+}
+.session-reading-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.session-feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  padding: 12px 24px 28px;
+}
+.session-speech {
+  padding: 18px 0;
+  border-bottom: 1px solid #edf0e8;
+  overflow-wrap: anywhere;
+}
+.session-speech:last-child {
+  border-bottom: 0;
+}
+.session-speech header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #6a7662;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.session-speaker {
+  display: inline-flex;
+  padding: 3px 7px;
+  border: 1px solid #e1e7d9;
+  border-radius: 5px;
+  background: #f3f6ed;
+  color: #4f6442;
+  font-size: 10px;
+}
+.session-speech header button {
+  border: 0;
+  background: transparent;
+  color: #5e7351;
+  font-size: 10px;
+  padding: 4px 6px;
+  margin-left: auto;
+}
+.session-speech header button:hover {
+  background: #edf2e6;
+}
+.session-speech p {
+  margin: 0;
+  line-height: 1.85;
+}
+.session-speech.translation p {
+  font-size: 19px;
+  color: #2d3828;
+}
+.session-speech.original p {
+  font-size: 14px;
+  color: #414c3a;
+}
+.session-speech.draft p {
+  color: #6b7564;
+}
+.session-draft-label {
+  color: #6b7564;
+  border-bottom: 1px dotted #8e9a82;
+}
+.session-speech.highlighted {
+  padding: 16px 12px;
+  margin: 0 -12px;
+  border-radius: 8px;
+  background: #e8f0dd;
+  box-shadow: inset 3px 0 #7d9866;
+}
+.session-pane-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid #e7ebdf;
+  color: #626e5c;
+  font-size: 10px;
+}
+.session-pane-footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 6px 8px;
+  border: 0;
+  background: #edf2e6;
+  color: #4e6540;
+  font-size: 10px;
+}
+.session-pane-footer button:disabled {
+  opacity: 1;
+  background: transparent;
+  color: #65725c;
+}
+.session-pane-footer svg {
+  width: 13px;
+  height: 13px;
+}
+.session-empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 280px;
+  height: 100%;
+  padding: 32px 20px;
+  text-align: center;
+  color: #65725c;
+}
+.session-empty > svg {
+  width: 32px;
+  height: 32px;
+  padding: 5px;
+  background: #edf2e6;
+  border-radius: 9px;
+  margin-bottom: 16px;
+}
+.session-empty h2 {
+  color: #46583b;
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.session-empty p {
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.session-summary-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.session-summary-status {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f7f9f3;
+  border-bottom: 1px solid #e7ebdf;
+  padding: 12px 22px;
+  color: #577049;
+  font-size: 11px;
+}
+.session-summary-status svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.session-summary-document {
+  padding: 26px;
+}
+.session-summary-document-heading {
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e8ecdf;
+  margin-bottom: 22px;
+}
+.session-summary-document-heading > span {
+  color: #6a795f;
+  font-size: 10px;
+}
+.session-summary-document-heading h2 {
+  margin: 10px 0;
+  font-size: 23px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.session-summary-document-heading p {
+  color: #65725c;
+  font-size: 11px;
+}
+.session-summary-document .native-note {
+  font-size: 14px;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+.session-summary-document .meeting-diagram {
+  margin: 18px 0;
+}
+.session-summary-outline {
+  border-top: 1px solid #e8ecdf;
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.session-summary-outline > h3 {
+  font-size: 13px;
+}
+.session-summary-outline article {
+  border-left: 2px solid #dae5ce;
+  padding: 0 0 16px 14px;
+  margin-top: 16px;
+}
+.session-summary-outline button {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 13px;
+  color: #405735;
+}
+.session-summary-outline button span {
+  font-size: 10px;
+  color: #65725c;
+}
+.session-summary-outline button span:last-child {
+  margin-left: auto;
+}
+.session-summary-outline p {
+  margin-top: 5px;
+  color: #606c56;
+  line-height: 1.75;
+  font-size: 12px;
+}
+.session-summary-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 22px;
+  color: #5e7151;
+  font-size: 10px;
+}
+.session-summary-error {
+  margin: 14px 20px;
+  padding: 12px 14px;
+  border: 1px solid #eed7c7;
+  border-radius: 8px;
+  background: #fff8f2;
+  color: #805d42;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.session-summary-error button {
+  margin-top: 8px;
+  color: #70533d;
+  font-size: 11px;
+}
+.session-jump-notice {
+  margin: 8px 14px;
+}
+.session-spin {
+  animation: session-spin 1.2s linear infinite;
+}
+@keyframes session-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 1050px) {
+  .native-session-main {
+    padding: 20px;
+  }
+  .session-pane-heading {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .session-feed {
+    padding: 8px 16px 20px;
+  }
+  .session-summary-document {
+    padding: 20px;
+  }
+}
+@media (max-width: 760px) {
+  .shell:has(> .native-session-main) {
+    height: auto;
+    overflow: visible;
+  }
+  .native-session-main {
+    padding: 20px 16px;
+  }
+  .live-session-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .session-original {
+    order: -1;
+    height: 48dvh;
+    min-height: 300px;
+  }
+  .session-reading {
+    height: 70dvh;
+    min-height: 420px;
+  }
+  .live-session-actions button,
+  .session-reading-tabs button,
+  .session-pane-footer button {
+    min-height: 44px;
+  }
+  .session-speech.translation p {
+    font-size: 17px;
+  }
+  .session-pane-footer {
+    flex-wrap: wrap;
+  }
+}
+
+.session-tab-container {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-feed-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.session-feed-content > .session-empty {
+  flex: 1;
 }

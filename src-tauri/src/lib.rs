@@ -6,6 +6,7 @@ mod knowledge;
 mod knowledge_documents;
 mod knowledge_generate;
 mod language;
+mod live_summary;
 mod luna;
 mod openai;
 mod record_ai;

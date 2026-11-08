@@ -559,6 +559,26 @@ export function ProductSettings({
                 <span className="quiet-badge">本地缓存</span>
               </Row>
               <Row
+                title="会中自动摘要"
+                description="每隔约 30 秒合并新发言，更新图文摘要。使用已保存的 OpenAI 密钥，会产生额外费用。"
+              >
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={s.liveMeetingSummary}
+                  aria-label="会中自动摘要"
+                  disabled={active}
+                  className={
+                    "product-switch " + (s.liveMeetingSummary ? "on" : "")
+                  }
+                  onClick={() =>
+                    change({ liveMeetingSummary: !s.liveMeetingSummary })
+                  }
+                >
+                  <i />
+                </button>
+              </Row>
+              <Row
                 title="自动生成会议纪要"
                 description="归档时用目标语言生成纪要。关闭后仍会自动生成标题和关键时间线。"
               >

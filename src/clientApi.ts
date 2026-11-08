@@ -17,6 +17,7 @@ export type Settings = {
   onboardingComplete: boolean;
   autoLearnMeetingTerms: boolean;
   autoGenerateMeetingNotes: boolean;
+  liveMeetingSummary: boolean;
 };
 export type Usage = {
   session_id: string;
@@ -62,6 +63,21 @@ export type RecordDetail = RecordSummary & {
   transcriptText?: string;
   segmentEdits?: Record<string, { text: string; speaker?: string }>;
 };
+export type LiveSummary = {
+  sessionId: string;
+  phase: "waiting" | "updating" | "ready" | "error" | "unavailable" | "stopped";
+  revision: number;
+  error: string | null;
+  content: {
+    title: string;
+    notes: string;
+    timeline: TimelinePoint[];
+    diagram: RecordDiagram | null;
+    sourceTimes: (number | null)[];
+    coveredThroughMs: number | null;
+    truncated: boolean;
+  } | null;
+};
 export type Knowledge = {
   domain: string;
   focus: string;
@@ -106,6 +122,7 @@ export const defaults: Settings = {
   onboardingComplete: false,
   autoLearnMeetingTerms: false,
   autoGenerateMeetingNotes: true,
+  liveMeetingSummary: true,
 };
 export function api<T>(
   command: string,
