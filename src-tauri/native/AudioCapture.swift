@@ -1,5 +1,12 @@
 import AVFoundation
 import ScreenCaptureKit
+import CoreGraphics
+
+// Called from the user-initiated start command, before opening provider sockets.
+@_cdecl("livecap_request_audio_access")
+func requestAudioAccess() -> Int32 {
+    CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() ? 0 : 1
+}
 
 typealias PacketCallback = @convention(c) (UnsafeMutableRawPointer, UnsafePointer<UInt8>, Int) -> Int32
 
@@ -24,7 +31,12 @@ final class AudioOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, sample.isValid, !failed else { return }
+        guard type == .audio else { return }
+        process(sample)
+    }
+
+    func process(_ sample: CMSampleBuffer) {
+        guard sample.isValid, !failed else { return }
         guard let description = sample.formatDescription,
               let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
               let inputFormat = AVAudioFormat(streamDescription: streamDescription) else { failed = true; return }

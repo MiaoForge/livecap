@@ -6,10 +6,15 @@ pub use windows::capture;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::capture;
+pub use macos::{capture, request_access};
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 compile_error!("Livecap supports Windows and macOS.");
+
+#[cfg(target_os = "windows")]
+pub fn request_access() -> Result<(), &'static str> {
+    Ok(())
+}
 
 pub fn level(packet: &[u8]) -> f32 {
     packet

@@ -11,6 +11,7 @@ mod session;
 mod soniox;
 mod storage;
 mod terms;
+mod tls;
 mod transcript;
 mod usage;
 
@@ -112,6 +113,7 @@ fn start_session(
         return Err("会议主题须为不超过 160 个字符的单行文字。".into());
     }
     let meeting_topic = (mode == SessionMode::Meeting).then_some(topic);
+    audio::request_access()?;
     app.state::<Sessions>().start(
         app.clone(),
         settings,
@@ -415,6 +417,7 @@ fn record_authorization() -> Result<tokio_tungstenite::tungstenite::http::Header
 }
 
 pub fn run() {
+    tls::initialize();
     tauri::Builder::default()
         .manage(Sessions::default())
         .manage(Generation::default())

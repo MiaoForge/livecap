@@ -17,3 +17,5 @@ The independent caption window receives caption state from the main window. Meet
 Knowledge preparation keeps its previous cache until a replacement passes validation. Usage accounting keeps knowledge preparation separate from live sessions and distinguishes known estimates from incomplete usage.
 
 The macOS audio adapter links a Swift ScreenCaptureKit bridge at build time. A serial callback queue converts captured audio to mono PCM16 at the provider rate (16 kHz or 24 kHz). Idle periods produce silence so recording timelines retain pauses. Capture runs on a native worker; shutdown stops the stream and drains callbacks before releasing Rust state. No screen frames are registered for output. The caption window uses Tauri's macOS private API support for transparency.
+
+TLS initialization explicitly selects rustls's aws-lc-rs provider before creating HTTP, WebSocket, or updater clients. Reqwest and the WebSocket stack enable different crypto backends, so relying on rustls's automatic provider selection would panic. A session error boundary preserves the normal persistence and cleanup path when an unwinding task fails.

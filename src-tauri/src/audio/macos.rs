@@ -10,6 +10,7 @@ type PacketCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usi
 type StateCallback = unsafe extern "C" fn(*mut std::ffi::c_void) -> i32;
 
 unsafe extern "C" {
+    fn livecap_request_audio_access() -> i32;
     fn livecap_capture_audio(
         rate: u32,
         context: *mut std::ffi::c_void,
@@ -17,6 +18,16 @@ unsafe extern "C" {
         stopped: StateCallback,
         ready: StateCallback,
     ) -> i32;
+}
+
+pub fn request_access() -> Result<(), &'static str> {
+    if unsafe { livecap_request_audio_access() } == 0 {
+        Ok(())
+    } else {
+        Err(
+            "macOS 尚未允许系统音频采集。请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 Livecap 或启动开发版的终端，然后完全退出并重新运行 npm run tauri dev（安装版请重新打开 Livecap）。",
+        )
+    }
 }
 
 struct Capture<'a> {

@@ -28,7 +28,7 @@ Release and local packages use an ad-hoc signature without an Apple Developer ID
 
 ## Permissions and credentials
 
-Start a session and grant the system capture prompt. In **System Settings → Privacy & Security → Screen & System Audio Recording** (called **Screen Recording** on older versions), allow Livecap and restart the app if requested. During development, the permission may be associated with the terminal or development executable; rebuilding or replacing an ad-hoc-signed application can require renewed permission. Microphone access is not required: the capture source is system playback audio.
+Starting a session explicitly checks and requests system capture permission before connecting to a provider. Grant the system capture prompt. If access is denied, Livecap shows instructions and does not start a session. In **System Settings → Privacy & Security → Screen & System Audio Recording** (called **Screen Recording** on older versions), allow Livecap and restart the app if requested. During development, the permission may be associated with the terminal or development executable; rebuilding or replacing an ad-hoc-signed application can require renewed permission. Microphone access is not required: the capture source is system playback audio.
 
 API keys use macOS Keychain. Settings and meeting data live in `~/Library/Application Support/com.chenmiaoi.livecap/`. Changing output devices or displays during capture requires restarting the session. ScreenCaptureKit requires an available display and an interactive desktop session. Protected media may not permit audio capture.
 
@@ -51,3 +51,15 @@ node scripts/verify-macos-bundles.mjs src-tauri/target/release/bundle
 For a build with `--target aarch64-apple-darwin`, use `src-tauri/target/aarch64-apple-darwin/release/bundle`. Add `--updater` when the build includes an updater archive. The verifier checks the standalone app, the copy inside the DMG, and (when requested) the extracted updater app. CI exercises this check and a regression test that rejects an incomplete signature and a tampered updater resource.
 
 Updater signatures authenticate update archives separately from ad-hoc application signing. No Apple certificate or notarization secrets are needed for the current release process.
+
+## Diagnose missing audio
+
+Run this from the same terminal used for development:
+
+```sh
+sh scripts/diagnose-macos-audio.sh --tone
+```
+
+The probe uses the same native capture bridge, requests permission, plays a quiet built-in test sound, and reports packet counts and peak PCM amplitude for eight seconds. It does not connect to a provider or save captured audio. A nonzero peak verifies audible capture; no nonzero samples or a capture error produces a nonzero exit status. Without `--tone`, play audio yourself during the test. The terminal's permission identity can differ from the installed application's identity.
+
+If capture works in the probe but the app stays at “waiting for speech”, inspect the development terminal for errors. A rustls message about ambiguous `ring` and `aws-lc-rs` providers indicates failure before capture starts. Livecap initializes its TLS provider at process startup; completely restart an older running development process after updating. In development builds, unwinding session task panics are converted to errors so normal record persistence and session cleanup can still run.

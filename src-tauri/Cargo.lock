@@ -1985,6 +1985,7 @@ dependencies = [
  "keyring",
  "reqwest",
  "rusqlite",
+ "rustls",
  "scraper",
  "serde",
  "serde_json",

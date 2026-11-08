@@ -29,7 +29,20 @@ struct AudioCaptureTests {
                         input.floatChannelData![channel][frame] = Float(sin(Double(frame) * 2 * .pi * 440 / 48000) * 0.5)
                     }
                 }
-                for _ in 0..<10 { output.process(input) }
+                // Exercise the CMSampleBuffer extraction used by ScreenCaptureKit too.
+                var sample: CMSampleBuffer?
+                precondition(CMAudioSampleBufferCreateWithPacketDescriptions(
+                    allocator: kCFAllocatorDefault, dataBuffer: nil, dataReady: false,
+                    makeDataReadyCallback: nil, refcon: nil,
+                    formatDescription: format.formatDescription, sampleCount: Int(input.frameLength),
+                    presentationTimeStamp: .zero, packetDescriptions: nil,
+                    sampleBufferOut: &sample) == noErr)
+                precondition(CMSampleBufferSetDataBufferFromAudioBufferList(
+                    sample!, blockBufferAllocator: kCFAllocatorDefault,
+                    blockBufferMemoryAllocator: kCFAllocatorDefault, flags: 0,
+                    bufferList: input.audioBufferList) == noErr)
+                precondition(CMSampleBufferSetDataReady(sample!) == noErr)
+                for _ in 0..<10 { output.process(sample!) }
                 precondition(!output.failed, "Conversion failed")
                 precondition(abs(Double(packets.samples.count) - rate) < rate * 0.02, "Incorrect output duration: \(packets.samples.count) samples at \(rate) Hz, \(channels) channels")
                 let peak = packets.samples.map { abs(Int($0)) }.max()!

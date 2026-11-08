@@ -9,6 +9,7 @@ use crate::{
     transcript::{Provider, StreamEvent, TranslationStatus},
     usage::Meter,
 };
+use futures_util::FutureExt;
 use serde::Serialize;
 use std::{
     path::PathBuf,
@@ -189,7 +190,9 @@ impl Sessions {
                 asr_terms,
                 knowledge,
             };
-            let mut result = run(&app, config, auth, stopped, capture_stop, &mut archive).await;
+            let mut result =
+                guard_session_run(run(&app, config, auth, stopped, capture_stop, &mut archive))
+                    .await;
             archive.meter.finish(result.is_err());
             let usage = archive.meter.snapshot();
             let mut learned_from = None;
@@ -322,6 +325,22 @@ impl Sessions {
             .ok_or("该会话的术语已失效。")?;
         terms.dismiss(term)
     }
+}
+
+// A failed provider/native task must still reach record persistence and slot cleanup.
+// Tokio otherwise contains the panic in the detached task, leaving the UI stopping forever.
+async fn guard_session_run(
+    future: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    std::panic::AssertUnwindSafe(future)
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|_| {
+            Err(
+                "转写任务意外退出，已停止会话；已有会议内容将保留。请检查开发终端的错误日志。"
+                    .into(),
+            )
+        })
 }
 
 fn request_stop(app: &AppHandle, active: &mut Active) {
@@ -534,4 +553,35 @@ fn mark_listening(app: &AppHandle) -> Result<(), String> {
         status(app, "listening", None);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panicked_session_cancels_capture_and_reaches_cleanup() {
+        tauri::async_runtime::block_on(async {
+            let stop = Arc::new(AtomicBool::new(false));
+            let capture_stop = stop.clone();
+            let result = guard_session_run(async move {
+                let _capture = StopCapture(capture_stop);
+                panic!("simulated provider task failure");
+            })
+            .await;
+            assert!(result.unwrap_err().contains("转写任务意外退出"));
+            assert!(stop.load(Ordering::Acquire));
+        });
+    }
+
+    #[test]
+    fn session_guard_preserves_normal_completion_and_errors() {
+        tauri::async_runtime::block_on(async {
+            assert!(guard_session_run(async { Ok(()) }).await.is_ok());
+            assert_eq!(
+                guard_session_run(async { Err("provider unavailable".into()) }).await,
+                Err("provider unavailable".into())
+            );
+        });
+    }
 }
