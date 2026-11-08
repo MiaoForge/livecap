@@ -1,3 +1,4 @@
+import { loadStartupResources, type StartupResource } from "./startup";
 import { NotificationProvider, ErrorNotice, useNotify } from "./Notifications";
 import { useEffect, useRef, useState, useMemo } from "react";
 import type { ReactNode } from "react";
@@ -296,6 +297,9 @@ function Workspace() {
   const selectedLibrary =
     libraries.find((library) => library.id === libraryId) ?? libraries[0];
   const knowledge = selectedLibrary?.cache ?? null;
+  const [startupFailures, setStartupFailures] = useState<StartupResource[]>([]);
+  const failed = (resource: StartupResource) =>
+    startupFailures.includes(resource);
   const [busy, setBusy] = useState(false),
     [ready, setReady] = useState(false),
     [consent, setConsent] = useState(false),
@@ -431,31 +435,47 @@ function Workspace() {
           void emit("livecap-caption-state", snapshotRef.current);
       }),
     ];
-    void Promise.all([
-      api<Settings>("load_settings"),
-      api<boolean>("has_api_key", { provider: "openai" }),
-      api<boolean>("has_api_key", { provider: "soniox" }),
-      api<KnowledgeLibrary[]>("list_knowledge_libraries"),
-      api<RecordSummary[]>("list_records"),
-      api<UsageEntry[]>("list_usage"),
-      api<KnowledgeUsageEntry[]>("list_knowledge_usage"),
-      ...subscriptions,
-    ])
-      .then((values) => {
-        if (disposed) return;
-        setSettings({ ...defaults, ...values[0] });
-        setKeys({ openai: values[1], soniox: values[2] });
-        setLibraries(values[3]);
-        setLibraryId(values[3][0]?.id ?? null);
-        setRecords(values[4]);
-        setUsageEntries(values[5]);
-        setKnowledgeUsage(values[6]);
-        setReady(true);
-      })
-      .catch(fail);
+    void loadStartupResources({
+      settings: () => api<Settings>("load_settings"),
+      openaiKey: () => api<boolean>("has_api_key", { provider: "openai" }),
+      sonioxKey: () => api<boolean>("has_api_key", { provider: "soniox" }),
+      libraries: () => api<KnowledgeLibrary[]>("list_knowledge_libraries"),
+      records: () => api<RecordSummary[]>("list_records"),
+      usage: () => api<UsageEntry[]>("list_usage"),
+      knowledgeUsage: () => api<KnowledgeUsageEntry[]>("list_knowledge_usage"),
+    }).then((results) => {
+      if (disposed) return;
+      const failures = (Object.keys(results) as StartupResource[]).filter(
+        (key) => results[key].status === "rejected",
+      );
+      setStartupFailures(failures);
+      if (results.settings.status === "fulfilled")
+        setSettings({ ...defaults, ...results.settings.value });
+      setKeys({
+        ...(results.openaiKey.status === "fulfilled" && {
+          openai: results.openaiKey.value,
+        }),
+        ...(results.sonioxKey.status === "fulfilled" && {
+          soniox: results.sonioxKey.value,
+        }),
+      });
+      if (results.libraries.status === "fulfilled") {
+        setLibraries(results.libraries.value);
+        setLibraryId(results.libraries.value[0]?.id ?? null);
+      }
+      if (results.records.status === "fulfilled")
+        setRecords(results.records.value);
+      if (results.usage.status === "fulfilled")
+        setUsageEntries(results.usage.value);
+      if (results.knowledgeUsage.status === "fulfilled")
+        setKnowledgeUsage(results.knowledgeUsage.value);
+      if (failures.length) notify("部分数据加载失败，请查看对应页面并重试。");
+      setReady(true);
+    });
+    subscriptions.forEach((subscription) => void subscription.catch(fail));
     return () => {
       disposed = true;
-      subscriptions.forEach((p) => void p.then((f) => f()));
+      subscriptions.forEach((p) => void p.then((f) => f()).catch(() => {}));
     };
   }, []);
   useEffect(() => {
@@ -585,7 +605,7 @@ function Workspace() {
       fail(e);
     }
   }
-  if (ready && desktop && !settings.onboardingComplete)
+  if (ready && desktop && !failed("settings") && !settings.onboardingComplete)
     return (
       <div className="product-onboarding">
         <header>
@@ -848,6 +868,12 @@ function Workspace() {
                       disabled={
                         busy ||
                         !ready ||
+                        failed("settings") ||
+                        failed(
+                          settings.provider === "openai"
+                            ? "openaiKey"
+                            : "sonioxKey",
+                        ) ||
                         (!desktop && Boolean(keys[settings.provider]))
                       }
                       aria-describedby="session-action-help"
@@ -871,13 +897,21 @@ function Workspace() {
                       )}
                     </button>
                     <small id="session-action-help" role="status">
-                      {!ready
-                        ? "正在读取本地配置…"
-                        : busy
-                          ? "正在处理会话，请稍候…"
-                          : !desktop
-                            ? "录音和实时字幕需在桌面客户端中使用。"
-                            : ""}
+                      {failed("settings")
+                        ? "配置加载失败，请重新启动应用重试。"
+                        : failed(
+                              settings.provider === "openai"
+                                ? "openaiKey"
+                                : "sonioxKey",
+                            )
+                          ? "凭据状态加载失败，请重新启动应用重试。"
+                          : !ready
+                            ? "正在读取本地配置…"
+                            : busy
+                              ? "正在处理会话，请稍候…"
+                              : !desktop
+                                ? "录音和实时字幕需在桌面客户端中使用。"
+                                : ""}
                     </small>
                   </section>
                   {mode === "meeting" && (
@@ -891,15 +925,19 @@ function Workspace() {
                           查看全部 →
                         </button>
                       </div>
-                      <RecordList
-                        records={records.slice(0, 5)}
-                        open={openRecord}
-                        onDelete={requestDeleteRecord}
-                        onStart={() => {
-                          setMode("meeting");
-                          nav("home");
-                        }}
-                      />
+                      {failed("records") ? (
+                        <p role="alert">记录加载失败，请重新启动应用重试。</p>
+                      ) : (
+                        <RecordList
+                          records={records.slice(0, 5)}
+                          open={openRecord}
+                          onDelete={requestDeleteRecord}
+                          onStart={() => {
+                            setMode("meeting");
+                            nav("home");
+                          }}
+                        />
+                      )}
                     </>
                   )}
                   {!knowledge && (
@@ -945,81 +983,97 @@ function Workspace() {
                       onChange={(e) => setQuery(e.target.value)}
                     />
                   </div>
-                  <RecordList
-                    records={records.filter((r) =>
-                      r.title.toLowerCase().includes(query.toLowerCase()),
-                    )}
-                    open={openRecord}
-                    onDelete={requestDeleteRecord}
-                    onStart={() => {
-                      setMode("meeting");
-                      nav("home");
-                    }}
-                  />
+                  {failed("records") ? (
+                    <p role="alert">记录加载失败，请重新启动应用重试。</p>
+                  ) : (
+                    <RecordList
+                      records={records.filter((r) =>
+                        r.title.toLowerCase().includes(query.toLowerCase()),
+                      )}
+                      open={openRecord}
+                      onDelete={requestDeleteRecord}
+                      onStart={() => {
+                        setMode("meeting");
+                        nav("home");
+                      }}
+                    />
+                  )}
                 </>
               )}
 
-              {page === "usage" && (
-                <UsageView
-                  records={[
-                    ...usageEntries.map((u) => ({
-                      id: u.id,
-                      title:
-                        records.find((r) => r.id === u.recordId)?.title ||
-                        (u.mode === "subtitle" ? "字幕翻译" : "会议翻译"),
-                      createdAt: u.createdAt,
-                      durationMs: u.usage.audio_ms,
-                      usage: u.usage,
-                    })),
-                    ...knowledgeUsage.map((k) => ({
-                      id: "knowledge-" + k.id,
-                      title: "知识准备 · " + k.domain,
-                      createdAt: k.createdAt,
-                      durationMs: 0,
-                      knowledge: k.usage,
-                    })),
-                  ].sort(
-                    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
-                  )}
-                />
-              )}
+              {page === "usage" &&
+                (failed("usage") || failed("knowledgeUsage") ? (
+                  <p role="alert">用量数据加载失败，请重新启动应用重试。</p>
+                ) : (
+                  <UsageView
+                    records={[
+                      ...usageEntries.map((u) => ({
+                        id: u.id,
+                        title:
+                          records.find((r) => r.id === u.recordId)?.title ||
+                          (u.mode === "subtitle" ? "字幕翻译" : "会议翻译"),
+                        createdAt: u.createdAt,
+                        durationMs: u.usage.audio_ms,
+                        usage: u.usage,
+                      })),
+                      ...knowledgeUsage.map((k) => ({
+                        id: "knowledge-" + k.id,
+                        title: "知识准备 · " + k.domain,
+                        createdAt: k.createdAt,
+                        durationMs: 0,
+                        knowledge: k.usage,
+                      })),
+                    ].sort(
+                      (a, b) =>
+                        Date.parse(b.createdAt) - Date.parse(a.createdAt),
+                    )}
+                  />
+                ))}
               {page === "settings" && (
                 <>
                   <h1>设置</h1>
-                  <ProductSettings
-                    settings={settings}
-                    setSettings={setSettings}
-                    keys={keys}
-                    onKeys={setKeys}
-                    active={active}
-                    preview={() => void overlay().catch(fail)}
-                    fail={fail}
-                  />
+                  {failed("settings") ? (
+                    <p role="alert">配置加载失败，请重新启动应用重试。</p>
+                  ) : (
+                    <ProductSettings
+                      settings={settings}
+                      setSettings={setSettings}
+                      keys={keys}
+                      onKeys={setKeys}
+                      active={active}
+                      preview={() => void overlay().catch(fail)}
+                      fail={fail}
+                    />
+                  )}
                 </>
               )}
             </>
           )}
           {ready && (
             <div hidden={page !== "knowledge" || Boolean(record)}>
-              <ProductKnowledge
-                key={selectedLibrary?.id ?? "empty"}
-                libraries={libraries}
-                libraryId={selectedLibrary?.id}
-                onSelectLibrary={setLibraryId}
-                onToggleLibrary={(id, enabled) =>
-                  void toggleLibrary(id, enabled)
-                }
-                cache={knowledge}
-                onCache={setKnowledge}
-                hasKey={Boolean(keys.openai)}
-                active={active}
-                fail={fail}
-                onGenerating={setGenerating}
-                openSettings={() => nav("settings")}
-                learned={learned}
-                settings={settings}
-                onSettings={setSettings}
-              />
+              {failed("libraries") || failed("settings") ? (
+                <p role="alert">知识空间数据加载失败，请重新启动应用重试。</p>
+              ) : (
+                <ProductKnowledge
+                  key={selectedLibrary?.id ?? "empty"}
+                  libraries={libraries}
+                  libraryId={selectedLibrary?.id}
+                  onSelectLibrary={setLibraryId}
+                  onToggleLibrary={(id, enabled) =>
+                    void toggleLibrary(id, enabled)
+                  }
+                  cache={knowledge}
+                  onCache={setKnowledge}
+                  hasKey={Boolean(keys.openai)}
+                  active={active}
+                  fail={fail}
+                  onGenerating={setGenerating}
+                  openSettings={() => nav("settings")}
+                  learned={learned}
+                  settings={settings}
+                  onSettings={setSettings}
+                />
+              )}
             </div>
           )}
         </main>
