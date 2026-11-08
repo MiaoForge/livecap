@@ -759,31 +759,14 @@ function Workspace() {
                   <section className="native-start">
                     <div>
                       <h2>
-                        {mode === "subtitle" ? "字幕翻译" : "会议翻译"} ·
-                        {mode === "meeting" && settings.meetingMicrophone
-                          ? "系统声音 + 麦克风"
-                          : "系统音频"}
+                        {mode === "subtitle"
+                          ? "字幕翻译 · 系统音频"
+                          : "会议翻译"}
                       </h2>
                       <p>
                         自动识别 → {languageName(settings.targetLanguage)} ·{" "}
                         {settings.provider === "openai" ? "OpenAI" : "Soniox"}
                       </p>
-                      {mode === "meeting" && (
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={settings.meetingMicrophone}
-                            disabled={active || busy}
-                            onChange={(event) =>
-                              setSettings({
-                                ...settings,
-                                meetingMicrophone: event.target.checked,
-                              })
-                            }
-                          />
-                          同时录制麦克风
-                        </label>
-                      )}
                     </div>
                     <button
                       className="primary"

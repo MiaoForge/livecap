@@ -297,6 +297,26 @@ export function ProductSettings({
         <section className="settings-surface">
           <div hidden={tab !== "general"}>
             <GeneralSettings active={active} />
+            <Row
+              title="会议麦克风"
+              description="会议翻译默认同时采集系统声音和麦克风。关闭后仅采集系统声音。"
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={s.meetingMicrophone}
+                aria-label="会议麦克风"
+                disabled={active}
+                className={
+                  "product-switch " + (s.meetingMicrophone ? "on" : "")
+                }
+                onClick={() =>
+                  change({ meetingMicrophone: !s.meetingMicrophone })
+                }
+              >
+                <i />
+              </button>
+            </Row>
           </div>
           {tab === "appearance" && (
             <>
