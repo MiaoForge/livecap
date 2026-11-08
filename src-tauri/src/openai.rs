@@ -145,6 +145,47 @@ pub struct Connection {
     last_level: Instant,
 }
 
+fn transcription_error(response: &Value) -> String {
+    let error = &response["error"];
+    let code = error["code"]
+        .as_str()
+        .or_else(|| error["type"].as_str())
+        .unwrap_or("");
+    let explanation = match code {
+        "invalid_api_key" | "authentication_error" => "OpenAI 认证失败，请在设置中检查 API Key。",
+        "insufficient_quota" | "billing_hard_limit_reached" => {
+            "OpenAI 账户可用额度不足，请检查账户余额和项目预算。"
+        }
+        "rate_limit_exceeded" => "OpenAI 请求速率达到限制，请稍后重试。",
+        "model_not_found" | "permission_denied" | "insufficient_permissions" => {
+            "OpenAI 模型不可用或项目无访问权限，请检查模型权限。"
+        }
+        "invalid_request_error"
+        | "invalid_value"
+        | "unknown_parameter"
+        | "missing_required_parameter" => "OpenAI 拒绝了实时转录配置。",
+        "server_error" | "internal_server_error" => "OpenAI 转录服务暂时异常，请稍后重试。",
+        "audio_unintelligible" => "该段音频无法识别。",
+        _ => "OpenAI 实时转录失败，请根据错误代码检查服务配置或稍后重试。",
+    };
+    // Surface structured diagnostics, never upstream free text that may echo credentials/audio.
+    let safe = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 100
+            && value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_.[]".contains(&c))
+    };
+    let mut message = explanation.to_owned();
+    if safe(code) {
+        message.push_str(&format!("（代码：{code}）"));
+    }
+    if let Some(param) = error["param"].as_str().filter(|param| safe(param)) {
+        message.push_str(&format!(" 参数：{param}"));
+    }
+    message
+}
+
 impl Connection {
     pub async fn open(
         endpoint: &str,
@@ -196,7 +237,7 @@ impl Connection {
             match response["type"].as_str() {
                 Some("session.updated" | "transcription_session.updated") => return Ok(connection),
                 Some("error") => {
-                    return Err("OpenAI 拒绝了实时转录配置，请检查模型权限和术语设置。".into());
+                    return Err(transcription_error(&response));
                 }
                 _ => (),
             }
@@ -292,8 +333,30 @@ impl Connection {
 
     fn receive(&mut self, response: Value, emit: &impl Fn(StreamEvent)) -> Result<(), String> {
         match response["type"].as_str() {
+            Some("conversation.item.input_audio_transcription.failed")
+                if response["error"]["code"] == "audio_unintelligible" =>
+            {
+                let id = field(&response, "item_id", 256)?;
+                if self
+                    .pending
+                    .iter()
+                    .any(|turn| turn.id.as_deref() == Some(id))
+                {
+                    emit(StreamEvent::TranslationWarning(
+                        "一段音频无法识别，已跳过，会议继续。".into(),
+                    ));
+                    return self.receive(
+                        json!({
+                            "type": "conversation.item.input_audio_transcription.completed",
+                            "item_id": id,
+                            "transcript": ""
+                        }),
+                        emit,
+                    );
+                }
+            }
             Some("error" | "conversation.item.input_audio_transcription.failed") => {
-                return Err("OpenAI 实时转录失败，请检查账户权限和用量。".into());
+                return Err(transcription_error(&response));
             }
             Some("input_audio_buffer.committed") => {
                 let id = field(&response, "item_id", 256)?;

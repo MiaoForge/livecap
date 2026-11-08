@@ -517,3 +517,96 @@ async fn pause_commits_audio_keeps_connection_alive_and_resumes_without_timeline
         assert_eq!(*sent_samples.lock().unwrap(), MIN_SAMPLES * 2);
     }).await.unwrap();
 }
+
+#[test]
+fn transcription_diagnostics_distinguish_quota_rate_configuration_and_unknown_failures() {
+    for (code, expected) in [
+        ("insufficient_quota", "额度不足"),
+        ("rate_limit_exceeded", "请求速率"),
+        ("invalid_api_key", "认证失败"),
+        ("model_not_found", "模型不可用"),
+        ("unknown_parameter", "配置"),
+        ("server_error", "服务暂时异常"),
+        ("unexpected_failure", "unexpected_failure"),
+    ] {
+        let message = transcription_error(
+            &json!({"error":{"code":code,"message":"secret upstream data","param":"session.audio.input"}}),
+        );
+        assert!(message.contains(expected), "{message}");
+        assert!(message.contains(code));
+        assert!(message.contains("session.audio.input"));
+        assert!(!message.contains("secret"));
+    }
+    let message =
+        transcription_error(&json!({"error":{"code":"sk-secret-token","param":"Bearer secret"}}));
+    assert!(!message.contains("secret"));
+    assert!(!message.contains("账户"));
+}
+
+#[tokio::test]
+async fn unintelligible_audio_clears_its_draft_and_unblocks_later_turns() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let mut socket = accept_async(listener.accept().await.unwrap().0)
+            .await
+            .unwrap();
+        next(&mut socket, "session.update").await;
+        send(&mut socket, json!({"type":"session.updated"})).await;
+        socket
+    });
+    let mut connection = Connection::handshake(
+        &endpoint,
+        &[],
+        authorization("test-only").unwrap(),
+        "recovery".into(),
+    )
+    .await
+    .unwrap();
+    let _server_socket = server.await.unwrap();
+    for id in ["unintelligible", "later", "after-recovery"] {
+        connection.pending.push_back(Pending {
+            id: Some(id.into()),
+            final_text: None,
+            start: 0,
+            end: 24000,
+            since: Instant::now(),
+        });
+    }
+    let events = Mutex::new(Vec::new());
+    let emit = |event| events.lock().unwrap().push(event);
+    connection.receive(json!({"type":"conversation.item.input_audio_transcription.delta","item_id":"unintelligible","delta":"draft"}), &emit).unwrap();
+    connection.receive(json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"later","transcript":"Confirmed later"}), &emit).unwrap();
+    connection.receive(json!({"type":"conversation.item.input_audio_transcription.failed","item_id":"unintelligible","error":{"code":"audio_unintelligible"}}), &emit).unwrap();
+    assert!(connection.drafts.is_empty());
+    assert_eq!(connection.pending.len(), 1);
+    connection.receive(json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"after-recovery","transcript":"Meeting continues"}), &emit).unwrap();
+    assert!(connection.pending.is_empty());
+    let events = events.into_inner().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, StreamEvent::TranslationWarning(_)))
+            .count(),
+        1
+    );
+    let final_texts: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::Transcript(frame) if frame.tokens[0].is_final => {
+                Some(frame.tokens[0].text.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(final_texts, ["", "Confirmed later", "Meeting continues"]);
+    assert!(
+        connection
+            .receive(
+                json!({"type":"error","error":{"code":"insufficient_quota"}}),
+                &|_| {}
+            )
+            .unwrap_err()
+            .contains("额度不足")
+    );
+}
