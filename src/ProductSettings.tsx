@@ -275,7 +275,7 @@ export function ProductSettings({
   const change = (patch: Partial<Settings>) => setSettings({ ...s, ...patch });
   return (
     <div className="product-settings">
-      <aside className="settings-subnav">
+      <nav className="settings-subnav" aria-label="设置分类">
         {[
           ["general", "通用"],
           ["appearance", "字幕外观"],
@@ -286,12 +286,13 @@ export function ProductSettings({
           <button
             key={id}
             className={id === tab ? "active" : ""}
+            aria-current={id === tab ? "page" : undefined}
             onClick={() => setTab(id)}
           >
             {label}
           </button>
         ))}
-      </aside>
+      </nav>
       <div className="settings-content">
         <section className="settings-surface">
           <div hidden={tab !== "general"}>
@@ -467,9 +468,21 @@ export function ProductSettings({
                     value={key}
                     onChange={(e) => setKey(e.target.value)}
                   />
-                  <button disabled={!desktop || !key.trim() || working}>
+                  <button
+                    aria-describedby="key-save-help"
+                    disabled={!desktop || !key.trim() || working}
+                  >
                     保存密钥
                   </button>
+                  <small id="key-save-help" role="status">
+                    {!desktop
+                      ? "请在桌面客户端中保存密钥。"
+                      : working
+                        ? "正在安全保存…"
+                        : !key.trim()
+                          ? "输入 API Key 后即可保存。"
+                          : "密钥将保存到系统安全凭据存储。"}
+                  </small>
                 </form>
               )}
               <Row title="服务地址">

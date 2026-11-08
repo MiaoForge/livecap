@@ -8,18 +8,13 @@ import {
   ArrowLeft,
   ArrowUpRight,
   AudioLines,
-  BookOpen,
   Captions as CaptionsIcon,
-  ChartPie,
   Copy,
   Download,
   FileText,
-  Home,
   Pause,
   Pencil,
   Play,
-  Radio,
-  Settings2,
   Sparkles,
   UsersRound,
   MessageCircle,
@@ -47,6 +42,7 @@ import {
 import type { CaptionState, TranscriptFrame } from "./captions";
 import { selectLiveCaptions } from "./captionPresentation";
 import "./Client.css";
+import { WorkspaceNavigation } from "./WorkspaceNavigation";
 import { NotesDocument } from "./NotesDocument";
 import { MeetingDiagram } from "./MeetingDiagram";
 import { timedSentences } from "./recordSentences";
@@ -61,21 +57,6 @@ type Snapshot = {
   status: Status;
   settings: Settings;
   mode: "subtitle" | "meeting";
-};
-const names: Record<string, string> = {
-  home: "首页",
-  records: "记录",
-  knowledge: "知识空间",
-  usage: "用量",
-  settings: "设置",
-  session: "当前会话",
-};
-const navIcons: Record<string, ReactNode> = {
-  home: <Home />,
-  records: <FileText />,
-  knowledge: <BookOpen />,
-  session: <Radio />,
-  usage: <ChartPie />,
 };
 function Dialog({
   title,
@@ -701,48 +682,17 @@ function Workspace() {
           </span>
         </div>
         <div className="nav-label">工作空间</div>
-        <nav>
-          {[
-            "home",
-            "records",
-            "knowledge",
-            ...(active ? ["session"] : []),
-            "usage",
-          ].map((p) => (
-            <a
-              key={p}
-              href={"#" + p}
-              className={page === p ? "active" : ""}
-              onClick={() => nav(p)}
-            >
-              <span className="nav-icon">{navIcons[p]}</span>
-              {names[p]}
-              {p === "records" && (
-                <small className="nav-count">{records.length}</small>
-              )}
-              {p === "knowledge" && generating && (
-                <small className="nav-count">整理中</small>
-              )}
-            </a>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <nav>
-            <a
-              href="#settings"
-              className={page === "settings" ? "active" : ""}
-              onClick={() => nav("settings")}
-            >
-              <span className="nav-icon">
-                <Settings2 />
-              </span>
-              设置
-            </a>
-          </nav>
-        </div>
+        <WorkspaceNavigation
+          page={page}
+          active={active}
+          generating={generating}
+          recordCount={records.length}
+          onNavigate={nav}
+        />
       </aside>
       <div className={page === "usage" ? "shell usage-shell" : "shell"}>
         <main
+          aria-busy={!ready}
           className={
             record
               ? "native-record-main"
@@ -758,7 +708,7 @@ function Workspace() {
             </div>
           )}
           {!ready ? (
-            <p>正在读取本地数据…</p>
+            <p role="status">正在读取本地数据…</p>
           ) : record ? (
             <RecordView
               key={record.id}
@@ -837,7 +787,13 @@ function Workspace() {
                     </div>
                     <button
                       className="primary"
-                      disabled={!desktop || busy || !ready || generating}
+                      disabled={
+                        busy ||
+                        !ready ||
+                        generating ||
+                        (!desktop && Boolean(keys[settings.provider]))
+                      }
+                      aria-describedby="session-action-help"
                       onClick={() =>
                         active
                           ? nav("session")
@@ -857,6 +813,17 @@ function Workspace() {
                         "配置 API Key"
                       )}
                     </button>
+                    <small id="session-action-help" role="status">
+                      {!ready
+                        ? "正在读取本地配置…"
+                        : generating
+                          ? "知识准备完成后即可开始。"
+                          : busy
+                            ? "正在处理会话，请稍候…"
+                            : !desktop
+                              ? "录音和实时字幕需在桌面客户端中使用。"
+                              : ""}
+                    </small>
                   </section>
                   {mode === "meeting" && (
                     <>
@@ -873,6 +840,10 @@ function Workspace() {
                         records={records.slice(0, 5)}
                         open={openRecord}
                         onDelete={requestDeleteRecord}
+                        onStart={() => {
+                          setMode("meeting");
+                          nav("home");
+                        }}
                       />
                     </>
                   )}
@@ -988,6 +959,10 @@ function Workspace() {
                     )}
                     open={openRecord}
                     onDelete={requestDeleteRecord}
+                    onStart={() => {
+                      setMode("meeting");
+                      nav("home");
+                    }}
                   />
                 </>
               )}
@@ -1145,7 +1120,9 @@ function RecordList({
   records,
   open,
   onDelete,
+  onStart,
 }: {
+  onStart: () => void;
   onDelete: (record: RecordSummary) => void;
   records: RecordSummary[];
   open: (id: number) => void;
@@ -1190,6 +1167,9 @@ function RecordList({
           <FileText />
           <h3>还没有会议记录</h3>
           <p>结束一次会议翻译后，录音、原文、译文与纪要会显示在这里。</p>
+          <button className="primary" onClick={onStart}>
+            开始会议
+          </button>
         </div>
       )}
     </div>
@@ -2127,11 +2107,12 @@ function UsageView({ records }: { records: UsageRow[] }) {
           <h1>用量</h1>
           <p>字幕、会议与知识准备的用量和预计费用</p>
         </div>
-        <div className="segmented">
+        <div className="segmented" role="group" aria-label="用量统计时间范围">
           {[7, 30].map((n) => (
             <button
               key={n}
               className={days === n ? "active" : ""}
+              aria-pressed={days === n}
               onClick={() => {
                 setDays(n);
                 setSelected(null);

@@ -176,7 +176,7 @@ p {
 .workspace small {
   display: block;
   font-size: 10px;
-  color: #8e918b;
+  color: #60675b;
   font-weight: 400;
   margin-top: 5px;
 }
@@ -200,7 +200,7 @@ p {
 }
 .nav-label {
   font-size: 10px;
-  color: #989b93;
+  color: #60675b;
   margin: 0 12px 11px;
 }
 nav {
@@ -213,7 +213,7 @@ nav a {
   gap: 12px;
   padding: 11px 13px;
   font-size: 12px;
-  color: #72766e;
+  color: #555e4e;
   border-radius: 7px;
   transition: background 0.2s;
 }
@@ -5150,7 +5150,7 @@ main {
 .native-dialog .dialog-actions {
   margin-top: 24px;
 }
-@media (max-width: 1050px) {
+@media (min-width: 761px) and (max-width: 1050px) {
   .native-record-columns {
     grid-template-columns: minmax(250px, 42fr) minmax(330px, 58fr);
   }
@@ -5537,6 +5537,7 @@ main {
 }
 .key-editor {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 12px 0;
 }
@@ -5841,6 +5842,7 @@ main {
   margin-left: 6px;
 }
 .knowledge-overview {
+  animation: knowledge-appear 160ms ease-out;
   display: flex;
   align-items: center;
   gap: 20px;
@@ -6675,8 +6677,8 @@ body.caption-surface #root {
 .native-caption-window header .caption-window-controls button {
   display: grid;
   place-items: center;
-  width: 25px;
-  height: 24px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   margin: 0;
   border-radius: 6px;
@@ -7066,4 +7068,102 @@ button.record-delete {
 }
 button.record-delete:hover {
   background: #fff1f0;
+}
+
+/* Keep current product views usable below the desktop sidebar breakpoint. */
+.settings-preview .ghost:hover,
+.settings-preview .ghost:focus-visible {
+  color: #34462c;
+  background: #e9ede3;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.usage-dashboard .segmented button {
+  min-height: 36px;
+  color: #555e4e;
+  font-size: 12px;
+}
+.usage-dashboard .segmented button.active {
+  color: #34462c;
+}
+.native-start:has(#session-action-help) {
+  flex-wrap: wrap;
+  gap: 16px;
+}
+#session-action-help {
+  flex-basis: 100%;
+  color: #60675b;
+}
+#session-action-help:empty {
+  display: none;
+}
+#key-save-help {
+  flex-basis: 100%;
+  color: #60675b;
+}
+@media (max-width: 760px) {
+  .sidebar {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .sidebar > nav {
+    flex-wrap: wrap;
+  }
+  .sidebar > nav a {
+    min-height: 44px;
+  }
+  .shell {
+    margin-left: 0;
+    min-width: 0;
+  }
+  .product-settings {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .settings-subnav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .settings-subnav button {
+    min-height: 44px;
+  }
+  .native-mode-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .native-start,
+  .product-setting-row {
+    flex-wrap: wrap;
+  }
+  .native-start > div,
+  .product-setting-row > div {
+    min-width: 0;
+  }
+  .product-setting-row > div:last-child {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .settings-surface {
+    padding: 16px 16px 4px;
+  }
+  .usage-hero {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+  }
+  .heading-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .heading-row input {
+    max-width: 100%;
+  }
+}
+
+@keyframes knowledge-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
