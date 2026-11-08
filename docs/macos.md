@@ -1,0 +1,53 @@
+# macOS
+
+Livecap supports macOS 13 or later on Apple Silicon. Windows continues to use WASAPI; macOS uses Apple's [ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration) to capture system audio without a virtual audio driver. Audio is converted locally to the provider's mono PCM16 format. No screen images are recorded or transmitted.
+
+## Build and run
+
+Install Node.js 24, stable Rust, and Xcode Command Line Tools:
+
+```sh
+xcode-select --install
+npm ci
+npm run tauri dev
+```
+
+Build a local application and disk image with:
+
+```sh
+npm run tauri -- build --bundles app,dmg -- --locked
+```
+
+Find the output under `src-tauri/target/release/bundle/`. The release workflow builds explicitly with `--target aarch64-apple-darwin`; those packages are under `src-tauri/target/aarch64-apple-darwin/release/bundle/`.
+
+## Install a release
+
+Download the Apple Silicon `.dmg` from [GitHub Releases](https://github.com/MiaoForge/livecap/releases), open it, and drag **Livecap** to **Applications**. Quit any existing instance before replacing it, then launch Livecap from Applications and eject the disk image. The `.app.tar.gz` and `.sig` assets are for the updater, not the initial installation.
+
+Release and local packages use an ad-hoc signature without an Apple Developer ID certificate. The complete app bundle is sealed for integrity, but the publisher is not verified and the app is not notarized. If macOS blocks first launch, confirm you downloaded the official release, try opening the installed app, then use **System Settings → Privacy & Security → Open Anyway** if available. Follow [Apple's instructions](https://support.apple.com/en-us/102445); do not disable Gatekeeper globally. A signature verification failure requires a rebuilt package, rather than bypassing verification.
+
+## Permissions and credentials
+
+Start a session and grant the system capture prompt. In **System Settings → Privacy & Security → Screen & System Audio Recording** (called **Screen Recording** on older versions), allow Livecap and restart the app if requested. During development, the permission may be associated with the terminal or development executable; rebuilding or replacing an ad-hoc-signed application can require renewed permission. Microphone access is not required: the capture source is system playback audio.
+
+API keys use macOS Keychain. Settings and meeting data live in `~/Library/Application Support/com.chenmiaoi.livecap/`. Changing output devices or displays during capture requires restarting the session. ScreenCaptureKit requires an available display and an interactive desktop session. Protected media may not permit audio capture.
+
+## Verification
+
+Run `npm run check`, `sh scripts/test-macos-audio.sh`, and a packaged build. The Swift checks exercise PCM resampling at both provider rates, mono/stereo input, and consumer failure. CI checks Apple Silicon macOS; these checks do not exercise privacy prompts or live capture. Before distributing a macOS build, verify on a real desktop:
+
+1. Deny capture permission and confirm the session reports a helpful error; allow permission, relaunch, and retry.
+2. Play system audio and test both OpenAI (24 kHz) and Soniox (16 kHz), including the level meter and translated captions.
+3. Leave a silent gap in a meeting, stop, and confirm replay duration and transcript alignment. Repeat start/stop and cancel during startup.
+4. Save a provider key, relaunch, and confirm retrieval from Keychain. Delete it and verify it is no longer configured.
+5. Move and resize the transparent caption window; open a knowledge source and the local recordings folder.
+
+To verify a packaged build locally:
+
+```sh
+node scripts/verify-macos-bundles.mjs src-tauri/target/release/bundle
+```
+
+For a build with `--target aarch64-apple-darwin`, use `src-tauri/target/aarch64-apple-darwin/release/bundle`. Add `--updater` when the build includes an updater archive. The verifier checks the standalone app, the copy inside the DMG, and (when requested) the extracted updater app. CI exercises this check and a regression test that rejects an incomplete signature and a tampered updater resource.
+
+Updater signatures authenticate update archives separately from ad-hoc application signing. No Apple certificate or notarization secrets are needed for the current release process.

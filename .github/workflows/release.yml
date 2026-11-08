@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: windows-release
+  group: desktop-release
   queue: max
 
 jobs:
@@ -73,3 +73,73 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./.github/scripts/publish-release.ps1
+
+  macos:
+    needs: windows
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run check
+      - run: sh scripts/test-macos-audio.sh
+      - name: Prepare macOS release configuration
+        env:
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          if (!process.env.UPDATER_PUBLIC_KEY?.trim()) throw new Error('Missing TAURI_UPDATER_PUBLIC_KEY');
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/livecap-release.json`, JSON.stringify({
+            version: process.env.GITHUB_REF_NAME.slice(1).replace(/-rc(\d+)$/, '-rc.$1'),
+            bundle: { createUpdaterArtifacts: true },
+            plugins: { updater: { pubkey: process.env.UPDATER_PUBLIC_KEY.trim() } }
+          }));
+          JS
+      - name: Build macOS Apple Silicon application
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --ci --target aarch64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/livecap-release.json" -- --locked
+      - name: Verify application signatures in macOS artifacts
+        run: node scripts/verify-macos-bundles.mjs src-tauri/target/aarch64-apple-darwin/release/bundle --updater
+      - name: Publish macOS assets and extend update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bundle=src-tauri/target/aarch64-apple-darwin/release/bundle
+          gh release upload "$GITHUB_REF_NAME" "$bundle"/dmg/*.dmg "$bundle"/macos/*.app.tar.gz "$bundle"/macos/*.app.tar.gz.sig --clobber
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json --output "$RUNNER_TEMP/latest.json" --clobber
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const directory = 'src-tauri/target/aarch64-apple-darwin/release/bundle/macos';
+          const archives = fs.readdirSync(directory).filter(name => name.endsWith('.app.tar.gz'));
+          if (archives.length !== 1) throw new Error('Expected exactly one macOS updater archive');
+          const name = archives[0];
+          const signature = fs.readFileSync(`${directory}/${name}.sig`, 'utf8').trim();
+          if (!signature) throw new Error('Empty macOS updater signature');
+          const file = `${process.env.RUNNER_TEMP}/latest.json`;
+          const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+          manifest.platforms['darwin-aarch64'] = {
+            signature,
+            url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.GITHUB_REF_NAME}/${encodeURIComponent(name)}`
+          };
+          fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
+          JS
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/latest.json" --clobber
+          gh release download updates --pattern latest.json --output "$RUNNER_TEMP/current.json" --clobber
+          if node --input-type=module -e 'import fs from "node:fs"; const read = n => JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${n}.json`)); process.exit(read("current").version === read("latest").version ? 0 : 1)'; then
+            gh release upload updates "$RUNNER_TEMP/latest.json" --clobber
+          fi

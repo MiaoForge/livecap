@@ -9,12 +9,12 @@ fn build_macos_audio() {
     use std::{env, path::PathBuf, process::Command};
     println!("cargo:rerun-if-changed=native/AudioCapture.swift");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
-        "aarch64" => "arm64",
-        "x86_64" => "x86_64",
-        arch => panic!("Unsupported macOS architecture: {arch}"),
-    };
-    let target = format!("{arch}-apple-macosx13.0");
+    assert_eq!(
+        env::var("CARGO_CFG_TARGET_ARCH").unwrap(),
+        "aarch64",
+        "macOS builds require the Apple Silicon target aarch64-apple-darwin"
+    );
+    let target = "arm64-apple-macosx13.0";
     let object = out.join("AudioCapture.o");
     let status = Command::new("xcrun")
         .args([
@@ -25,7 +25,7 @@ fn build_macos_audio() {
             "-O",
             "-emit-object",
             "-target",
-            &target,
+            target,
         ])
         .arg("native/AudioCapture.swift")
         .arg("-o")
@@ -44,7 +44,7 @@ fn build_macos_audio() {
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=livecap_audio");
     let info = Command::new("xcrun")
-        .args(["swiftc", "-print-target-info", "-target", &target])
+        .args(["swiftc", "-print-target-info", "-target", target])
         .output()
         .unwrap();
     assert!(info.status.success());
