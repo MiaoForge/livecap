@@ -786,7 +786,6 @@ function Workspace() {
                       disabled={
                         busy ||
                         !ready ||
-                        generating ||
                         (!desktop && Boolean(keys[settings.provider]))
                       }
                       aria-describedby="session-action-help"
@@ -812,13 +811,11 @@ function Workspace() {
                     <small id="session-action-help" role="status">
                       {!ready
                         ? "正在读取本地配置…"
-                        : generating
-                          ? "知识准备完成后即可开始。"
-                          : busy
-                            ? "正在处理会话，请稍候…"
-                            : !desktop
-                              ? "录音和实时字幕需在桌面客户端中使用。"
-                              : ""}
+                        : busy
+                          ? "正在处理会话，请稍候…"
+                          : !desktop
+                            ? "录音和实时字幕需在桌面客户端中使用。"
+                            : ""}
                     </small>
                   </section>
                   {mode === "meeting" && (

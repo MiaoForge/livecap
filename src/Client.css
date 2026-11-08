@@ -7653,3 +7653,13 @@ button.record-delete:hover {
 .session-feed-content > .session-empty {
   flex: 1;
 }
+.knowledge-session-notice {
+  margin: 16px 0;
+  border: 1px solid #dde5d4;
+  border-radius: 8px;
+  background: #f2f6ec;
+  color: #516448;
+  padding: 12px 16px;
+  font-size: 12px;
+  line-height: 1.7;
+}

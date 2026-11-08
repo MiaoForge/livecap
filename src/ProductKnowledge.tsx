@@ -138,7 +138,7 @@ export function ProductKnowledge({
     setShowTerms(true);
   }
   async function generate() {
-    if (generating || active || !desktop) return;
+    if (generating || !desktop) return;
     let latestProgress = initialProgress;
     let unlisten: (() => void) | undefined;
     setResult(null);
@@ -217,7 +217,6 @@ export function ProductKnowledge({
         )}
         {cache && !preparing && !(tab === "library" && showTerms) && (
           <button
-            disabled={active}
             onClick={() => {
               setResult(null);
               setPreparing(true);
@@ -232,6 +231,11 @@ export function ProductKnowledge({
           </button>
         )}
       </div>
+      {active && (
+        <p className="knowledge-session-notice" role="status">
+          会议进行中，也可以准备知识库。本场会话使用启动时的知识与热词，新库从下一场会话生效。
+        </p>
+      )}
       {preparing ? (
         <div className="knowledge-prepare">
           {result && (
@@ -366,7 +370,7 @@ export function ProductKnowledge({
                 {hasKey ? (
                   <button
                     className="primary"
-                    disabled={!desktop || active}
+                    disabled={!desktop}
                     onClick={() => void generate()}
                   >
                     生成知识库 →
@@ -554,7 +558,6 @@ export function ProductKnowledge({
                 <button
                   className={cache?.enabled ? "active small" : "small"}
                   aria-pressed={cache?.enabled ?? false}
-                  disabled={active}
                   onClick={() =>
                     void api<Knowledge>("set_knowledge_enabled", {
                       enabled: !cache?.enabled,

@@ -26,6 +26,8 @@ A failed update keeps the previous summary and retries with a delay. Ending the 
 
 Use **Knowledge Space** to prepare domain terminology. Preparation reads public sources and can incur model and search charges. The local cache stores entries, source links, and usage. A failed refresh preserves the existing cache. Automatic vocabulary focuses on spoken concepts, product names, and acronyms. Command switches, underscore-style code identifiers, and code expressions are excluded from new entries and filtered from existing caches when loaded. Explicitly saved personal vocabulary remains available.
 
+Knowledge preparation can run during a meeting or alongside session startup. The active session keeps the knowledge and ASR vocabulary captured when it started; preparing or enabling another library affects the next session without restarting capture. Only one knowledge generation can run at a time.
+
 The **Usage** page shows estimates based on recorded audio and provider-reported usage. Provider invoices determine actual charges.
 
 ## Local data

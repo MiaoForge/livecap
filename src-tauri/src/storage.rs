@@ -1558,6 +1558,27 @@ mod tests {
     }
 
     #[test]
+    fn preparing_new_knowledge_keeps_the_active_sessions_vocabulary_snapshot() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        storage.replace_knowledge(sample_cache(&["AST"])).unwrap();
+        let active_snapshot = storage.load_knowledge().unwrap().unwrap();
+        storage.replace_knowledge(sample_cache(&["Sema"])).unwrap();
+        let next_snapshot = storage.load_knowledge().unwrap().unwrap();
+        let context = std::collections::VecDeque::new();
+        assert_eq!(
+            crate::knowledge::merge_asr_terms(&[], Some(&active_snapshot), ""),
+            ["AST"]
+        );
+        assert_eq!(
+            crate::knowledge::merge_asr_terms(&[], Some(&next_snapshot), ""),
+            ["Sema"]
+        );
+        assert_eq!(active_snapshot.retrieve("AST", &context, &[]).len(), 1);
+        assert!(active_snapshot.retrieve("Sema", &context, &[]).is_empty());
+        assert_eq!(next_snapshot.retrieve("Sema", &context, &[]).len(), 1);
+    }
+
+    #[test]
     fn invalid_or_cancelled_replacement_preserves_current_cache() {
         let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
         assert!(storage.load_knowledge().unwrap().is_none());
