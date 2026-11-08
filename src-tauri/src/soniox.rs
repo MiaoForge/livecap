@@ -1,5 +1,6 @@
 use crate::{
     audio,
+    audio_feed::Packet,
     storage::Settings,
     transcript::{Provider, StreamEvent, TranscriptEvent, TranscriptToken, TranslationStatus},
 };
@@ -92,6 +93,7 @@ fn normalize(text: &str, session_id: &str) -> Result<TranscriptEvent, String> {
         .tokens
         .unwrap_or_default()
         .into_iter()
+        .filter(|token| token.text != "<fin>")
         .map(|token| TranscriptToken {
             text: token.text,
             is_final: token.is_final,
@@ -117,6 +119,7 @@ fn normalize(text: &str, session_id: &str) -> Result<TranscriptEvent, String> {
 pub struct Connection {
     socket: Socket,
     session_id: String,
+    unfinalized_audio: bool,
 }
 
 impl Connection {
@@ -143,7 +146,11 @@ impl Connection {
                 }
             }
         };
-        let mut connection = Self { socket, session_id };
+        let mut connection = Self {
+            socket,
+            session_id,
+            unfinalized_audio: false,
+        };
         tokio::select! {
             biased;
             _ = &mut *stopped => return Ok(None),
@@ -176,19 +183,33 @@ impl Connection {
         }
     }
 
+    async fn finalize_pause(&mut self) -> Result<(), String> {
+        if self.unfinalized_audio {
+            self.send(Message::Text(json!({"type":"finalize"}).to_string().into()))
+                .await?;
+            self.unfinalized_audio = false;
+        }
+        Ok(())
+    }
+
     pub async fn stream(
         &mut self,
-        packets: &mut mpsc::Receiver<Vec<u8>>,
+        packets: &mut mpsc::Receiver<Packet>,
         stopped: &mut oneshot::Receiver<()>,
         mut emit: impl FnMut(StreamEvent),
     ) -> Result<(), String> {
         let mut sent_audio = false;
+        let mut keepalive = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(5),
+            Duration::from_secs(5),
+        );
         let level_interval = Duration::from_millis(80);
         let mut last_level = Instant::now() - level_interval;
         loop {
             tokio::select! {
                 biased;
                 _ = &mut *stopped => break,
+                _ = keepalive.tick() => self.send(Message::Text(json!({"type":"keepalive"}).to_string().into())).await?,
                 response = self.socket.next() => {
                     if Self::receive(&self.session_id, response, &mut emit)? {
                         return Ok(());
@@ -198,14 +219,21 @@ impl Connection {
                     let Some(packet) = packet else {
                         return Err("系统音频采集已停止。".into());
                     };
-                    if last_level.elapsed() >= level_interval {
-                        emit(StreamEvent::AudioLevel(audio::level(&packet)));
-                        last_level = Instant::now();
+                    match packet {
+                        Packet::Pcm(packet) => {
+                            if last_level.elapsed() >= level_interval {
+                                emit(StreamEvent::AudioLevel(audio::level(&packet)));
+                                last_level = Instant::now();
+                            }
+                            let samples = packet.len() / 2;
+                            self.send(Message::Binary(packet.into())).await?;
+                            emit(StreamEvent::AudioSent(samples));
+                            sent_audio = true;
+                            self.unfinalized_audio = true;
+                        }
+                        Packet::Paused => self.finalize_pause().await?,
+                        Packet::Resumed => {}
                     }
-                    let samples = packet.len() / 2;
-                    self.send(Message::Binary(packet.into())).await?;
-                    emit(StreamEvent::AudioSent(samples));
-                    sent_audio = true;
                 }
             }
         }
@@ -214,17 +242,24 @@ impl Connection {
 
     pub async fn finish(
         &mut self,
-        packets: &mut mpsc::Receiver<Vec<u8>>,
+        packets: &mut mpsc::Receiver<Packet>,
         mut sent_audio: bool,
         mut emit: impl FnMut(StreamEvent),
     ) -> Result<(), String> {
         timeout(FINISH_TIMEOUT, async {
             packets.close();
             while let Some(packet) = packets.recv().await {
-                let samples = packet.len() / 2;
-                self.send(Message::Binary(packet.into())).await?;
-                emit(StreamEvent::AudioSent(samples));
-                sent_audio = true;
+                match packet {
+                    Packet::Pcm(packet) => {
+                        let samples = packet.len() / 2;
+                        self.send(Message::Binary(packet.into())).await?;
+                        emit(StreamEvent::AudioSent(samples));
+                        sent_audio = true;
+                        self.unfinalized_audio = true;
+                    }
+                    Packet::Paused => self.finalize_pause().await?,
+                    Packet::Resumed => {}
+                }
             }
             // Soniox expects at least one audio frame, even if the user stops immediately.
             if !sent_audio {

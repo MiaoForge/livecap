@@ -130,7 +130,7 @@ async fn local_socket_transcribes_mock_pcm_and_drains_final_translation() {
         .unwrap()
         .unwrap();
         let (tx, mut packets) = mpsc::channel(2);
-        tx.send(vec![0, 128]).await.unwrap();
+        tx.send(Packet::Pcm(vec![0, 128])).await.unwrap();
         let mut events = Vec::new();
         let mut levels = Vec::new();
         connection
@@ -138,7 +138,7 @@ async fn local_socket_transcribes_mock_pcm_and_drains_final_translation() {
                 StreamEvent::Transcript(event) => {
                     events.push(event);
                     if events.len() == draft_count {
-                        tx.try_send(vec![1, 2]).unwrap();
+                        tx.try_send(Packet::Pcm(vec![1, 2])).unwrap();
                         stop_tx.take().unwrap().send(()).unwrap();
                     }
                 }
@@ -165,6 +165,112 @@ async fn local_socket_transcribes_mock_pcm_and_drains_final_translation() {
         assert_eq!(last.tokens[0].language.as_deref(), Some("zh"));
         assert_eq!(last.tokens[0].source_language.as_deref(), Some("en"));
         assert_eq!(last.tokens[0].translation_source, Some(Provider::Soniox));
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn paused_session_finalizes_and_keeps_alive_then_resumes_and_stops() {
+    timeout(Duration::from_secs(12), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let (resume_tx, resume_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut socket = tokio_tungstenite::accept_async(listener.accept().await.unwrap().0)
+                .await
+                .unwrap();
+            socket.next().await.unwrap().unwrap(); // configuration
+            assert_eq!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Binary(vec![1, 2].into())
+            );
+            let finalize: Value = serde_json::from_str(
+                socket
+                    .next()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_text()
+                    .unwrap()
+                    .as_str(),
+            )
+            .unwrap();
+            assert_eq!(finalize["type"], "finalize");
+            socket
+                .send(Message::Text(
+                    json!({"tokens":[{"text":"<fin>","is_final":true}]})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            let keepalive: Value = serde_json::from_str(
+                socket
+                    .next()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_text()
+                    .unwrap()
+                    .as_str(),
+            )
+            .unwrap();
+            assert_eq!(keepalive["type"], "keepalive");
+            resume_tx.send(()).unwrap();
+            assert_eq!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Binary(vec![5, 6].into())
+            );
+            assert_eq!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Text("".into())
+            );
+            socket
+                .send(Message::Text(
+                    json!({"tokens":[],"finished":true}).to_string().into(),
+                ))
+                .await
+                .unwrap();
+        });
+        let (stop_tx, mut stopped) = oneshot::channel();
+        let mut connection = Connection::open(
+            &endpoint,
+            &Settings::default(),
+            authorization("local-only").unwrap(),
+            "pause-test".into(),
+            &mut stopped,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (tx, mut packets) = mpsc::channel(8);
+        let feed = std::sync::Arc::new(crate::audio_feed::AudioFeed::new(tx));
+        feed.forward(&[1, 2], |_| Ok(())).unwrap();
+        feed.set_paused(true).unwrap();
+        feed.forward(&[3, 4], |_| panic!("paused audio must not be recorded"))
+            .unwrap();
+        let resume = tokio::spawn(async move {
+            resume_rx.await.unwrap();
+            feed.set_paused(false).unwrap();
+            feed.forward(&[5, 6], |_| Ok(())).unwrap();
+            stop_tx.send(()).unwrap();
+        });
+        let mut sent_samples = 0;
+        connection
+            .stream(&mut packets, &mut stopped, |event| match event {
+                StreamEvent::AudioSent(samples) => sent_samples += samples,
+                StreamEvent::Transcript(frame) => assert!(
+                    frame.tokens.is_empty(),
+                    "control tokens must not become captions"
+                ),
+                _ => {}
+            })
+            .await
+            .unwrap();
+        server.await.unwrap();
+        resume.await.unwrap();
+        assert_eq!(sent_samples, 2);
     })
     .await
     .unwrap();

@@ -1,5 +1,6 @@
 use crate::{
     audio,
+    audio_feed::Packet,
     transcript::{StreamEvent, TranscriptEvent, TranscriptToken, TranslationStatus},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -363,19 +364,46 @@ impl Connection {
         Ok(())
     }
 
+    async fn ingest(&mut self, packet: Packet, emit: &impl Fn(StreamEvent)) -> Result<(), String> {
+        match packet {
+            Packet::Pcm(pcm) => self.packet(pcm, emit).await,
+            Packet::Paused => {
+                self.commit(emit).await?;
+                self.pre_roll.clear();
+                Ok(())
+            }
+            Packet::Resumed => {
+                self.pre_roll.clear();
+                Ok(())
+            }
+        }
+    }
+
     pub async fn stream(
         &mut self,
-        packets: &mut mpsc::Receiver<Vec<u8>>,
+        packets: &mut mpsc::Receiver<Packet>,
         stopped: &mut oneshot::Receiver<()>,
         emit: &impl Fn(StreamEvent),
     ) -> Result<(), String> {
+        let mut keepalive = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(5),
+            Duration::from_secs(5),
+        );
         loop {
             tokio::select! {
                 biased;
                 _ = &mut *stopped => return self.finish(packets, emit).await,
                 response = self.socket.next() => self.receive(parse(response)?, emit)?,
+                _ = keepalive.tick() => {
+                    timeout(IO_TIMEOUT, self.socket.send(Message::Ping(Vec::new().into())))
+                        .await.map_err(|_| "OpenAI 连接保活超时。")?
+                        .map_err(|_| NETWORK_ERROR)?;
+                    if self.pending.front().is_some_and(|turn| turn.since.elapsed() > Duration::from_secs(20)) {
+                        return Err("等待 OpenAI 返回最终转录超时。".into());
+                    }
+                }
                 packet = packets.recv() => {
-                    self.packet(packet.ok_or("系统音频采集已停止。")?, emit).await?;
+                    self.ingest(packet.ok_or("系统音频采集已停止。")?, emit).await?;
                 }
             }
         }
@@ -383,13 +411,13 @@ impl Connection {
 
     pub async fn finish(
         &mut self,
-        packets: &mut mpsc::Receiver<Vec<u8>>,
+        packets: &mut mpsc::Receiver<Packet>,
         emit: &impl Fn(StreamEvent),
     ) -> Result<(), String> {
         timeout(FINISH_TIMEOUT, async {
             packets.close();
             while let Some(packet) = packets.recv().await {
-                self.packet(packet, emit).await?;
+                self.ingest(packet, emit).await?;
             }
             self.commit(emit).await?;
             while !self.pending.is_empty() {

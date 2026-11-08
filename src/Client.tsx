@@ -55,7 +55,12 @@ import type { LearnedTerm } from "./ProductKnowledge";
 
 type Status = { state: string; message?: string };
 type SummaryStatus = { running: boolean; error?: string | null };
-type Snapshot = { captions: CaptionState; status: Status; settings: Settings };
+type Snapshot = {
+  captions: CaptionState;
+  status: Status;
+  settings: Settings;
+  mode: "subtitle" | "meeting";
+};
 const names: Record<string, string> = {
   home: "首页",
   records: "记录",
@@ -147,6 +152,7 @@ function CaptionWindow() {
     captions: createCaptionState(),
     status: { state: "idle" },
     settings: defaults,
+    mode: "subtitle",
   });
   useEffect(() => {
     const subscription = listen<Snapshot>("livecap-caption-state", (event) => {
@@ -161,12 +167,13 @@ function CaptionWindow() {
     };
   }, []);
   const { settings, status } = snapshot;
-  const running = ["connecting", "listening", "stopping"].includes(
+  const running = ["connecting", "listening", "paused", "stopping"].includes(
     status.state,
   );
   const label = (
     {
       listening: "实时字幕",
+      paused: "会议已暂停",
       connecting: "正在连接",
       stopping: "正在保存",
       idle: "字幕预览",
@@ -198,6 +205,24 @@ function CaptionWindow() {
         </span>
         <GripHorizontal className="caption-grip" size={18} aria-hidden="true" />
         <div className="caption-window-controls">
+          {snapshot.mode === "meeting" &&
+            ["listening", "paused"].includes(status.state) && (
+              <button
+                title={status.state === "paused" ? "继续会议" : "暂停会议"}
+                aria-label={status.state === "paused" ? "继续会议" : "暂停会议"}
+                onClick={() =>
+                  void api("set_meeting_paused", {
+                    paused: status.state !== "paused",
+                  }).catch(console.error)
+                }
+              >
+                {status.state === "paused" ? (
+                  <Play size={13} />
+                ) : (
+                  <Pause size={13} />
+                )}
+              </button>
+            )}
           {running && (
             <button
               title="结束会话"
@@ -259,8 +284,10 @@ function Workspace() {
     [generating, setGenerating] = useState(false),
     [query, setQuery] = useState("");
   const [snapshotRef] = useState(() => ({ current: null as Snapshot | null }));
-  snapshotRef.current = { captions, status, settings };
-  const active = ["connecting", "listening", "stopping"].includes(status.state);
+  snapshotRef.current = { captions, status, settings, mode };
+  const active = ["connecting", "listening", "paused", "stopping"].includes(
+    status.state,
+  );
   const openRecordId = useRef<number | null>(null);
   openRecordId.current = record?.id ?? null;
   const [summaryStatus, setSummaryStatus] = useState<
@@ -286,9 +313,12 @@ function Workspace() {
     let disposed = false;
     const subscriptions = [
       listen<Status>("session-status", (e) => {
-        const wasActive = ["connecting", "listening", "stopping"].includes(
-          snapshotRef.current?.status.state ?? "",
-        );
+        const wasActive = [
+          "connecting",
+          "listening",
+          "paused",
+          "stopping",
+        ].includes(snapshotRef.current?.status.state ?? "");
         setStatus(e.payload);
         if (wasActive && ["idle", "error"].includes(e.payload.state)) {
           void WebviewWindow.getByLabel("captions")
@@ -375,10 +405,13 @@ function Workspace() {
   }, []);
   useEffect(() => {
     if (desktop)
-      void emit("livecap-caption-state", { captions, status, settings }).catch(
-        fail,
-      );
-  }, [captions, status, settings]);
+      void emit("livecap-caption-state", {
+        captions,
+        status,
+        settings,
+        mode,
+      }).catch(fail);
+  }, [captions, status, settings, mode]);
   async function overlay() {
     const w = await WebviewWindow.getByLabel("captions");
     if (w) {
@@ -424,6 +457,16 @@ function Workspace() {
       await overlay();
     } catch (e) {
       fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function pauseMeeting() {
+    setBusy(true);
+    try {
+      await api("set_meeting_paused", { paused: status.state !== "paused" });
+    } catch (error) {
+      fail(error);
     } finally {
       setBusy(false);
     }
@@ -803,6 +846,18 @@ function Workspace() {
                   <div className="heading-row">
                     <h1>当前会话</h1>
                     <div className="native-actions">
+                      {mode === "meeting" &&
+                        ["listening", "paused"].includes(status.state) && (
+                          <button
+                            disabled={busy}
+                            onClick={() => void pauseMeeting()}
+                          >
+                            {status.state === "paused" ? <Play /> : <Pause />}
+                            {status.state === "paused"
+                              ? "继续会议"
+                              : "暂停会议"}
+                          </button>
+                        )}
                       <button onClick={() => void overlay().catch(fail)}>
                         打开字幕窗
                       </button>
@@ -828,6 +883,7 @@ function Workspace() {
                               mode === "meeting"
                                 ? "实时转写 · 录音中"
                                 : "实时字幕 · 不保存",
+                            paused: "会议已暂停 · 不录音",
                             stopping: "等待最后结果",
                             idle: mode === "meeting" ? "已保存" : "已结束",
                             error: "会话中断",
@@ -837,8 +893,15 @@ function Workspace() {
                     </span>
                     <span>预计费用 {money(usage?.estimated_usd)}</span>
                   </div>
+                  {status.state === "paused" && (
+                    <p role="status">
+                      已暂停：新音频不会保存或发送，点击“继续会议”后接着录制到同一条记录。
+                      {settings.provider === "soniox" &&
+                        "Soniox 在线连接仍按连接时长计费。"}
+                    </p>
+                  )}
                   <div className="native-caption-preview">
-                    <Captions snapshot={{ captions, status, settings }} />
+                    <Captions snapshot={{ captions, status, settings, mode }} />
                   </div>
                   {mode === "meeting" && (
                     <div className="native-live-transcript">

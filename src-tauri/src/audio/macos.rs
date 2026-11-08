@@ -1,8 +1,9 @@
+use crate::audio_feed::AudioFeed;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 const CAPTURE_ERROR: &str = "无法采集 macOS 系统音频。请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 Livecap，然后重新启动应用。";
 
@@ -33,7 +34,7 @@ pub fn request_access() -> Result<(), &'static str> {
 struct Capture<'a> {
     stop: Arc<AtomicBool>,
     ready: Option<oneshot::Sender<()>>,
-    audio: mpsc::Sender<Vec<u8>>,
+    audio: Arc<AudioFeed>,
     on_packet: &'a mut dyn FnMut(&[u8]) -> Result<(), &'static str>,
     error: Option<&'static str>,
     finished: bool,
@@ -41,15 +42,8 @@ struct Capture<'a> {
 
 impl Capture<'_> {
     fn packet(&mut self, packet: &[u8]) -> Result<(), &'static str> {
-        (self.on_packet)(packet)?;
-        match self.audio.try_send(packet.to_vec()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.finished = true;
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => Err("网络发送跟不上音频采集，已停止转写。"),
-        }
+        self.finished = !self.audio.forward(packet, &mut self.on_packet)?;
+        Ok(())
     }
 }
 
@@ -92,7 +86,7 @@ pub fn capture(
     sample_rate: u32,
     stop: Arc<AtomicBool>,
     ready_tx: oneshot::Sender<()>,
-    audio: mpsc::Sender<Vec<u8>>,
+    audio: Arc<AudioFeed>,
     mut on_packet: impl FnMut(&[u8]) -> Result<(), &'static str>,
 ) -> Result<(), &'static str> {
     if stop.load(Ordering::Acquire) {
@@ -127,6 +121,8 @@ pub fn capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio_feed::Packet;
+    use tokio::sync::mpsc;
 
     #[test]
     fn forwards_recording_and_reports_backpressure() {
@@ -140,14 +136,14 @@ mod tests {
         let mut state = Capture {
             stop: Arc::new(AtomicBool::new(false)),
             ready: Some(ready),
-            audio,
+            audio: Arc::new(AudioFeed::new(audio)),
             on_packet: &mut record,
             error: None,
             finished: false,
         };
         assert!(state.packet(&[1, 2]).is_ok());
         assert!(state.packet(&[3, 4]).is_err());
-        assert_eq!(packets.try_recv().unwrap(), [1, 2]);
+        assert_eq!(packets.try_recv().unwrap(), Packet::Pcm(vec![1, 2]));
         drop(state);
         assert_eq!(recorded, [1, 2, 3, 4]);
     }
@@ -160,7 +156,7 @@ mod tests {
         let mut state = Capture {
             stop: Arc::new(AtomicBool::new(false)),
             ready: None,
-            audio,
+            audio: Arc::new(AudioFeed::new(audio)),
             on_packet: &mut record,
             error: None,
             finished: false,
@@ -180,7 +176,7 @@ mod tests {
         let mut state = Capture {
             stop: stop.clone(),
             ready: Some(ready_tx),
-            audio,
+            audio: Arc::new(AudioFeed::new(audio)),
             on_packet: &mut record,
             error: None,
             finished: false,
@@ -198,12 +194,12 @@ mod tests {
 
     #[test]
     fn recorder_failure_is_preserved_across_native_callback() {
-        let (audio, _) = mpsc::channel(1);
+        let (audio, _packets) = mpsc::channel(1);
         let mut record = |_: &[u8]| Err("recording failed");
         let mut state = Capture {
             stop: Arc::new(AtomicBool::new(false)),
             ready: None,
-            audio,
+            audio: Arc::new(AudioFeed::new(audio)),
             on_packet: &mut record,
             error: None,
             finished: false,

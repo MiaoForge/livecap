@@ -1,3 +1,4 @@
+use crate::audio_feed::AudioFeed;
 use std::{
     ptr,
     sync::{
@@ -7,7 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use windows::Win32::{
     Media::Audio::{
         AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
@@ -113,7 +114,7 @@ pub fn capture(
     sample_rate: u32,
     stop: Arc<AtomicBool>,
     ready: oneshot::Sender<()>,
-    audio: mpsc::Sender<Vec<u8>>,
+    audio: Arc<AudioFeed>,
     mut on_packet: impl FnMut(&[u8]) -> Result<(), &'static str>,
 ) -> Result<(), &'static str> {
     if stop.load(Ordering::Acquire) {
@@ -143,13 +144,8 @@ pub fn capture(
         if stop.load(Ordering::Acquire) {
             break;
         }
-        on_packet(&packet)?;
-        match audio.try_send(packet) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Closed(_)) => break,
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                return Err("网络发送跟不上音频采集，已停止转写。");
-            }
+        if !audio.forward(&packet, &mut on_packet)? {
+            break;
         }
     }
     Ok(())

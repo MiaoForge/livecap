@@ -238,7 +238,7 @@ async fn local_realtime_to_luna_preserves_drafts_and_orders_final_turns() {
         }).unwrap();
         let (tx, mut packets) = mpsc::channel(4);
         let speech = [0, 16].repeat(MIN_SAMPLES);
-        tx.send(speech.clone()).await.unwrap();
+        tx.send(Packet::Pcm(speech.clone())).await.unwrap();
         let events = Mutex::new(Vec::new());
         let audio_samples = Mutex::new(0);
         connection.stream(&mut packets, &mut stopped, &|event| {
@@ -250,8 +250,8 @@ async fn local_realtime_to_luna_preserves_drafts_and_orders_final_turns() {
                 let token = &frame.tokens[0];
                 assert!(token.speaker.is_none());
                 if !token.is_final && token.text == "LLVM Clang crashes." {
-                    tx.try_send(vec![0; SENTENCE_QUIET_SAMPLES * 2]).unwrap();
-                    tx.try_send(speech.clone()).unwrap();
+                    tx.try_send(Packet::Pcm(vec![0; SENTENCE_QUIET_SAMPLES * 2])).unwrap();
+                    tx.try_send(Packet::Pcm(speech.clone())).unwrap();
                 }
                 if !token.is_final && token.text == "Sema" {
                     stop.lock().unwrap().take().unwrap().send(()).unwrap();
@@ -353,7 +353,7 @@ async fn replay_topic_benchmark(
         let mut clock = tokio::time::interval(Duration::from_millis(20));
         for chunk in pcm.chunks(SAMPLE_RATE as usize * 2 / 50) {
             clock.tick().await;
-            if tx.send(chunk.to_vec()).await.is_err() {
+            if tx.send(Packet::Pcm(chunk.to_vec())).await.is_err() {
                 return;
             }
         }
@@ -457,4 +457,62 @@ async fn live_meeting_topic_benchmark() {
             "Replay failed: {result}"
         );
     }
+}
+
+#[tokio::test]
+async fn pause_commits_audio_keeps_connection_alive_and_resumes_without_timeline_gap() {
+    timeout(Duration::from_secs(12), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let (resume_tx, resume_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut socket = accept_async(listener.accept().await.unwrap().0).await.unwrap();
+            next(&mut socket, "session.update").await;
+            send(&mut socket, json!({"type":"session.updated"})).await;
+            next(&mut socket, "input_audio_buffer.append").await;
+            next(&mut socket, "input_audio_buffer.commit").await;
+            send(&mut socket, json!({"type":"input_audio_buffer.committed","item_id":"before"})).await;
+            send(&mut socket, json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"before","transcript":"Bonjour"})).await;
+            // Nothing from the paused period is appended; only a WebSocket ping arrives.
+            let ping = socket.next().await.unwrap().unwrap();
+            assert!(matches!(ping, Message::Ping(_)));
+            socket.send(Message::Pong(Vec::new().into())).await.unwrap();
+            resume_tx.send(()).unwrap();
+            next(&mut socket, "input_audio_buffer.append").await;
+            next(&mut socket, "input_audio_buffer.commit").await;
+            send(&mut socket, json!({"type":"input_audio_buffer.committed","item_id":"after","previous_item_id":"before"})).await;
+            send(&mut socket, json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"after","transcript":"こんにちは"})).await;
+        });
+        let (stop_tx, mut stopped) = oneshot::channel();
+        let mut connection = Connection::open(&endpoint, &[], authorization("test-only").unwrap(), "pause-test".into(), &mut stopped).await.unwrap().unwrap();
+        let (tx, mut packets) = mpsc::channel(8);
+        let feed = std::sync::Arc::new(crate::audio_feed::AudioFeed::new(tx));
+        let speech = [0, 16].repeat(MIN_SAMPLES);
+        feed.forward(&speech, |_| Ok(())).unwrap();
+        feed.set_paused(true).unwrap();
+        feed.forward(&speech, |_| panic!("paused audio must not be recorded")).unwrap();
+        let resumed_feed = feed.clone();
+        let resume = tokio::spawn(async move {
+            resume_rx.await.unwrap();
+            resumed_feed.set_paused(false).unwrap();
+            resumed_feed.forward(&speech, |_| Ok(())).unwrap();
+            resumed_feed.set_paused(true).unwrap();
+            stop_tx.send(()).unwrap(); // Stopping while paused must drain and complete too.
+        });
+        let transcripts = Mutex::new(Vec::new());
+        let sent_samples = Mutex::new(0);
+        connection.stream(&mut packets, &mut stopped, &|event| match event {
+            StreamEvent::Transcript(frame) => transcripts.lock().unwrap().push(frame),
+            StreamEvent::AudioSent(samples) => *sent_samples.lock().unwrap() += samples,
+            _ => {}
+        }).await.unwrap();
+        server.await.unwrap();
+        resume.await.unwrap();
+        let transcripts = transcripts.lock().unwrap();
+        assert_eq!(transcripts.len(), 2);
+        assert_eq!(transcripts[0].tokens[0].end_ms, Some(100));
+        assert_eq!(transcripts[1].tokens[0].start_ms, Some(100));
+        assert_eq!(transcripts[1].tokens[0].end_ms, Some(200));
+        assert_eq!(*sent_samples.lock().unwrap(), MIN_SAMPLES * 2);
+    }).await.unwrap();
 }

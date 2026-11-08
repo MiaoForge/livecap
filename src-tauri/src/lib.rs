@@ -1,4 +1,5 @@
 mod audio;
+mod audio_feed;
 mod knowledge;
 mod knowledge_documents;
 mod knowledge_generate;
@@ -121,6 +122,11 @@ fn start_session(
         cache,
         meeting_topic,
     )
+}
+
+#[tauri::command]
+fn set_meeting_paused(app: AppHandle, paused: bool) -> Result<(), String> {
+    app.state::<Sessions>().set_paused(&app, paused)
 }
 
 #[tauri::command]
@@ -464,6 +470,7 @@ pub fn run() {
             delete_api_key,
             start_session,
             stop_session,
+            set_meeting_paused,
             dismiss_learned_term,
             load_knowledge,
             generate_knowledge,

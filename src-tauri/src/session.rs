@@ -1,5 +1,6 @@
 use crate::{
     audio,
+    audio_feed::{AudioFeed, Packet},
     knowledge::{Generation, KnowledgeCache, merge_asr_terms},
     knowledge_generate, luna, openai,
     records::{AudioArtifact, NewRecord, Recorder, RecordingsDirectory, SessionMode, WavWriter},
@@ -14,7 +15,7 @@ use serde::Serialize;
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -39,6 +40,21 @@ struct Active {
     stop: Option<oneshot::Sender<()>>,
     capture_stop: Arc<AtomicBool>,
     close_main: bool,
+    mode: SessionMode,
+    listening: bool,
+    audio: Weak<AudioFeed>,
+}
+
+impl Active {
+    fn set_paused(&self, paused: bool) -> Result<(), &'static str> {
+        if self.mode != SessionMode::Meeting || !self.listening || self.stop.is_none() {
+            return Err("只能暂停或继续正在录制的会议。");
+        }
+        self.audio
+            .upgrade()
+            .ok_or("音频采集已停止。")?
+            .set_paused(paused)
+    }
 }
 
 struct RunConfig {
@@ -46,6 +62,8 @@ struct RunConfig {
     terms: Arc<SessionTerms>,
     asr_terms: Vec<String>,
     knowledge: Option<KnowledgeCache>,
+    audio: Arc<AudioFeed>,
+    packets: mpsc::Receiver<Packet>,
 }
 
 struct Archive {
@@ -150,10 +168,15 @@ impl Sessions {
         let created_at = app.state::<Storage>().record_timestamp()?;
         let (stop, stopped) = oneshot::channel();
         let capture_stop = Arc::new(AtomicBool::new(false));
+        let (sender, packets) = mpsc::channel(32);
+        let audio = Arc::new(AudioFeed::new(sender));
         slot.active = Some(Active {
             stop: Some(stop),
             capture_stop: capture_stop.clone(),
             close_main: false,
+            mode,
+            listening: false,
+            audio: Arc::downgrade(&audio),
         });
         let terms_app = app.clone();
         let asr_terms = merge_asr_terms(
@@ -189,6 +212,8 @@ impl Sessions {
                 terms,
                 asr_terms,
                 knowledge,
+                audio,
+                packets,
             };
             let mut result =
                 guard_session_run(run(&app, config, auth, stopped, capture_stop, &mut archive))
@@ -290,6 +315,14 @@ impl Sessions {
         Ok(())
     }
 
+    pub fn set_paused(&self, app: &AppHandle, paused: bool) -> Result<(), String> {
+        let slot = self.0.lock().map_err(|_| "无法读取转写状态。")?;
+        let active = slot.active.as_ref().ok_or("当前没有会议。")?;
+        active.set_paused(paused)?;
+        status(app, if paused { "paused" } else { "listening" }, None);
+        Ok(())
+    }
+
     pub fn stop(&self, app: &AppHandle) {
         if let Ok(mut slot) = self.0.lock() {
             if let Some(active) = slot.active.as_mut() {
@@ -372,6 +405,8 @@ async fn run(
         terms,
         asr_terms,
         knowledge,
+        audio,
+        mut packets,
     } = config;
     let session_id = terms.session_id.clone();
     let target_language = settings.target_language;
@@ -432,14 +467,13 @@ async fn run(
     };
     let capture_guard = StopCapture(capture_stop.clone());
     let (ready, ready_rx) = oneshot::channel();
-    let (tx, mut packets) = mpsc::channel(32);
     let directory = archive.directory.clone();
     let capture = tauri::async_runtime::spawn_blocking(move || {
         let mut writer = directory
             .as_deref()
             .map(|directory| WavWriter::create(directory, sample_rate))
             .transpose()?;
-        let outcome = audio::capture(sample_rate, capture_stop, ready, tx, |packet| {
+        let outcome = audio::capture(sample_rate, capture_stop, ready, audio, |packet| {
             if let Some(writer) = writer.as_mut() {
                 writer.append(packet)?;
             }
@@ -543,12 +577,9 @@ fn emit(app: &AppHandle, event: &StreamEvent) {
 
 fn mark_listening(app: &AppHandle) -> Result<(), String> {
     let sessions = app.state::<Sessions>();
-    let slot = sessions.0.lock().map_err(|_| "无法读取转写状态。")?;
-    if slot
-        .active
-        .as_ref()
-        .is_some_and(|active| active.stop.is_some())
-    {
+    let mut slot = sessions.0.lock().map_err(|_| "无法读取转写状态。")?;
+    if let Some(active) = slot.active.as_mut().filter(|active| active.stop.is_some()) {
+        active.listening = true;
         status(app, "listening", None);
     }
     Ok(())
@@ -557,6 +588,32 @@ fn mark_listening(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pause_requires_a_listening_meeting_and_cannot_resume_after_stop() {
+        let (sender, mut packets) = mpsc::channel(4);
+        let feed = Arc::new(AudioFeed::new(sender));
+        let (stop, _stopped) = oneshot::channel();
+        let mut active = Active {
+            stop: Some(stop),
+            capture_stop: Arc::new(AtomicBool::new(false)),
+            close_main: false,
+            mode: SessionMode::Meeting,
+            listening: false,
+            audio: Arc::downgrade(&feed),
+        };
+        assert!(active.set_paused(true).is_err());
+        active.listening = true;
+        active.mode = SessionMode::Subtitle;
+        assert!(active.set_paused(true).is_err());
+        active.mode = SessionMode::Meeting;
+        active.set_paused(true).unwrap();
+        assert_eq!(packets.try_recv().unwrap(), Packet::Paused);
+        active.set_paused(false).unwrap();
+        assert_eq!(packets.try_recv().unwrap(), Packet::Resumed);
+        active.stop.take();
+        assert!(active.set_paused(false).is_err());
+    }
 
     #[test]
     fn panicked_session_cancels_capture_and_reaches_cleanup() {
