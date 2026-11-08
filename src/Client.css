@@ -7051,3 +7051,19 @@ body.caption-surface #root {
   border-top: 1px solid #a6b5a2;
   background: #f7f9f4;
 }
+
+.document-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.document-row .document-card {
+  flex: 1;
+  min-width: 0;
+}
+button.record-delete {
+  color: #b42318;
+}
+button.record-delete:hover {
+  background: #fff1f0;
+}

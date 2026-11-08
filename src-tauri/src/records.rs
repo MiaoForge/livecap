@@ -386,6 +386,15 @@ pub struct AudioChunk {
     mime_type: &'static str,
 }
 
+pub fn delete_audio(directory: &Path, name: &str) -> Result<(), String> {
+    let id = wav_id(name).ok_or("该记录的录音文件名无效。")?;
+    match std::fs::remove_file(directory.join(format!("{id}.wav"))) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("无法删除录音文件，请检查文件权限或稍后重试。".into()),
+    }
+}
+
 pub fn read_audio(
     directory: &Path,
     name: &str,
@@ -412,6 +421,24 @@ pub fn read_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_audio_tolerates_missing_files_and_rejects_unsafe_names() {
+        let directory =
+            std::env::temp_dir().join(format!("livecap-audio-delete-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let name = format!("{}.wav", Uuid::new_v4());
+        std::fs::write(directory.join(&name), b"audio").unwrap();
+        delete_audio(&directory, &name).unwrap();
+        assert!(!directory.join(&name).exists());
+        delete_audio(&directory, &name).unwrap();
+        assert!(delete_audio(&directory, "../outside.wav").is_err());
+        assert!(delete_audio(&directory, "unrelated.wav").is_err());
+        std::fs::create_dir(directory.join(&name)).unwrap();
+        assert!(delete_audio(&directory, &name).is_err());
+        std::fs::remove_dir(directory.join(&name)).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
 
     #[test]
     fn storage_info_counts_owned_wav_files_and_real_bytes() {

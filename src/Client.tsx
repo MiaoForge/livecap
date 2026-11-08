@@ -26,6 +26,7 @@ import {
   X,
   GripHorizontal,
   Square,
+  Trash2,
 } from "lucide-react";
 import { api, desktop, defaults, money, time, date } from "./clientApi";
 import type {
@@ -288,6 +289,13 @@ function Workspace() {
   const active = ["connecting", "listening", "paused", "stopping"].includes(
     status.state,
   );
+  const [deleteRecord, setDeleteRecord] = useState<RecordSummary | null>(null);
+  const [deletingRecord, setDeletingRecord] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  function requestDeleteRecord(item: RecordSummary) {
+    setDeleteError("");
+    setDeleteRecord(item);
+  }
   const openRecordId = useRef<number | null>(null);
   openRecordId.current = record?.id ?? null;
   const [summaryStatus, setSummaryStatus] = useState<
@@ -481,6 +489,26 @@ function Workspace() {
       setBusy(false);
     }
   }
+  async function confirmDeleteRecord() {
+    if (!deleteRecord || deletingRecord) return;
+    setDeletingRecord(true);
+    setDeleteError("");
+    try {
+      await api("delete_record", { id: deleteRecord.id });
+      setRecords((current) => current.filter((r) => r.id !== deleteRecord.id));
+      setRecord((current) =>
+        current?.id === deleteRecord.id ? null : current,
+      );
+      setDeleteRecord(null);
+      await refresh();
+    } catch (e) {
+      setDeleteError(String(e instanceof Error ? e.message : e));
+      fail(e);
+    } finally {
+      setDeletingRecord(false);
+    }
+  }
+
   async function openRecord(id: number) {
     setBusy(true);
     try {
@@ -737,6 +765,7 @@ function Workspace() {
               summaryStatus={summaryStatus[record.id]}
               record={record}
               onBack={() => setRecord(null)}
+              onDelete={() => requestDeleteRecord(record)}
               onChange={(r) => {
                 setRecord(r);
                 void refresh();
@@ -843,6 +872,7 @@ function Workspace() {
                       <RecordList
                         records={records.slice(0, 5)}
                         open={openRecord}
+                        onDelete={requestDeleteRecord}
                       />
                     </>
                   )}
@@ -957,6 +987,7 @@ function Workspace() {
                       r.title.toLowerCase().includes(query.toLowerCase()),
                     )}
                     open={openRecord}
+                    onDelete={requestDeleteRecord}
                   />
                 </>
               )}
@@ -1024,6 +1055,35 @@ function Workspace() {
           )}
         </main>
       </div>
+      {deleteRecord && (
+        <Dialog
+          title="删除会议记录"
+          close={() => {
+            if (!deletingRecord) setDeleteRecord(null);
+          }}
+        >
+          <p>
+            确定删除「{deleteRecord.title}
+            」吗？录音、原文、译文和纪要将永久删除，无法恢复。用量统计会保留。
+          </p>
+          {deleteError && <p role="alert">{deleteError}</p>}
+          <div className="dialog-actions">
+            <button
+              disabled={deletingRecord}
+              onClick={() => setDeleteRecord(null)}
+            >
+              取消
+            </button>
+            <button
+              className="record-delete"
+              disabled={deletingRecord}
+              onClick={() => void confirmDeleteRecord()}
+            >
+              {deletingRecord ? "正在删除…" : "删除记录"}
+            </button>
+          </div>
+        </Dialog>
+      )}
       {consent && (
         <Dialog
           title={mode === "meeting" ? "开始会议翻译" : "开始字幕翻译"}
@@ -1084,7 +1144,9 @@ function Workspace() {
 function RecordList({
   records,
   open,
+  onDelete,
 }: {
+  onDelete: (record: RecordSummary) => void;
   records: RecordSummary[];
   open: (id: number) => void;
 }) {
@@ -1092,30 +1154,36 @@ function RecordList({
     <div className="document-list">
       {records.length ? (
         records.map((r) => (
-          <button
-            className="document-card"
-            key={r.id}
-            onClick={() => open(r.id)}
-          >
-            <div className="document-icon">
-              <FileText />
-            </div>
-            <div className="document-info">
-              <div className="document-title">
-                <strong>{r.title}</strong>
-                <span className="document-status">
-                  {r.status === "partial" ? "部分记录" : "已保存"}
-                </span>
+          <div className="document-row" key={r.id}>
+            <button className="document-card" onClick={() => open(r.id)}>
+              <div className="document-icon">
+                <FileText />
               </div>
-              <small>
-                {date(r.createdAt)} · {time(r.durationMs)} ·{" "}
-                {r.audioAvailable ? "含录音" : "文字记录"}
-              </small>
-            </div>
-            <span className="document-arrow">
-              <ArrowUpRight />
-            </span>
-          </button>
+              <div className="document-info">
+                <div className="document-title">
+                  <strong>{r.title}</strong>
+                  <span className="document-status">
+                    {r.status === "partial" ? "部分记录" : "已保存"}
+                  </span>
+                </div>
+                <small>
+                  {date(r.createdAt)} · {time(r.durationMs)} ·{" "}
+                  {r.audioAvailable ? "含录音" : "文字记录"}
+                </small>
+              </div>
+              <span className="document-arrow">
+                <ArrowUpRight />
+              </span>
+            </button>
+            <button
+              className="record-delete"
+              aria-label={`删除记录：${r.title}`}
+              title="删除记录"
+              onClick={() => onDelete(r)}
+            >
+              <Trash2 />
+            </button>
+          </div>
         ))
       ) : (
         <div className="records-empty">
@@ -1137,6 +1205,7 @@ function replay(record: RecordDetail) {
 function RecordView({
   record: r,
   onBack,
+  onDelete,
   onChange,
   fail,
   summaryStatus,
@@ -1144,6 +1213,7 @@ function RecordView({
   record: RecordDetail;
   summaryStatus?: SummaryStatus;
   onBack: () => void;
+  onDelete: () => void;
   onChange: (r: RecordDetail) => void;
   fail: (e: unknown) => void;
 }) {
@@ -1410,6 +1480,9 @@ function RecordView({
             {r.targetLanguage ? " · " + languageName(r.targetLanguage) : ""}
           </small>
         </div>
+        <button className="record-delete" onClick={onDelete}>
+          <Trash2 /> 删除
+        </button>
         <button className="record-export" onClick={download}>
           <Download /> 导出
         </button>

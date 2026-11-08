@@ -156,6 +156,11 @@ impl Storage {
                 transcript_text TEXT,
                 usage TEXT
             );
+            CREATE TABLE IF NOT EXISTS deleted_record_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                usage TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS subtitle_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
@@ -215,6 +220,7 @@ impl Storage {
         let mut query = connection
             .prepare(
                 "SELECT id,created_at,usage,'subtitle' FROM subtitle_usage
+             UNION ALL SELECT id,created_at,usage,'deleted_meeting' FROM deleted_record_usage
              UNION ALL SELECT id,created_at,usage,'meeting' FROM records WHERE usage IS NOT NULL
              UNION ALL SELECT -t.id,t.created_at,e.usage,'meeting' FROM transcripts t
                 JOIN legacy_record_edits e ON e.id=t.id WHERE e.usage IS NOT NULL
@@ -228,7 +234,7 @@ impl Storage {
                 Ok(UsageEntry {
                     id: format!("{mode}-{id}"),
                     record_id: (mode == "meeting").then_some(id),
-                    mode: if mode == "meeting" {
+                    mode: if mode == "meeting" || mode == "deleted_meeting" {
                         SessionMode::Meeting
                     } else {
                         SessionMode::Subtitle
@@ -679,6 +685,56 @@ impl Storage {
             .map_err(|_| STORAGE_ERROR.into())
     }
 
+    pub fn delete_record(&self, id: i64, directory: &Path) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(|_| STORAGE_ERROR)?;
+        let record = read_record(&transaction, id)?;
+        if let Some(usage) = record.summary.usage {
+            transaction
+                .execute(
+                    "INSERT INTO deleted_record_usage (created_at,usage) VALUES (?1,?2)",
+                    params![
+                        record.summary.created_at,
+                        serde_json::to_string(&usage).map_err(|_| STORAGE_ERROR)?
+                    ],
+                )
+                .map_err(|_| STORAGE_ERROR)?;
+        }
+        for table in [
+            "record_insights",
+            "record_note_sources",
+            "record_diagrams",
+            "record_segment_edits",
+        ] {
+            transaction
+                .execute(&format!("DELETE FROM {table} WHERE record_id=?1"), [id])
+                .map_err(|_| STORAGE_ERROR)?;
+        }
+        if id < 0 {
+            let legacy_id = id.checked_neg().ok_or("记录不存在。")?;
+            transaction
+                .execute("DELETE FROM legacy_record_edits WHERE id=?1", [legacy_id])
+                .map_err(|_| STORAGE_ERROR)?;
+            transaction
+                .execute("DELETE FROM transcripts WHERE id=?1", [legacy_id])
+                .map_err(|_| STORAGE_ERROR)?;
+        } else {
+            let audio: Option<String> = transaction
+                .query_row("SELECT audio_file FROM records WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
+                .map_err(|_| STORAGE_ERROR)?;
+            transaction
+                .execute("DELETE FROM records WHERE id=?1", [id])
+                .map_err(|_| STORAGE_ERROR)?;
+            if let Some(name) = audio {
+                crate::records::delete_audio(directory, &name)?;
+            }
+        }
+        transaction.commit().map_err(|_| STORAGE_ERROR)?;
+        Ok(())
+    }
+
     pub fn delete_transcript(&self, id: i64) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(|_| STORAGE_ERROR)?;
@@ -1035,6 +1091,109 @@ mod tests {
         storage.delete_transcript(-id).unwrap();
         let id = -storage.save_transcript("new").unwrap();
         assert!(storage.get_record(id).unwrap().segment_edits.is_none());
+    }
+
+    #[test]
+    fn deleting_records_removes_audio_and_related_data_but_preserves_usage() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("livecap-delete-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let audio_name = format!("{}.wav", uuid::Uuid::new_v4());
+        std::fs::write(directory.join(&audio_name), b"audio").unwrap();
+        let id = storage
+            .save_record(NewRecord {
+                target_language: Language::Zh,
+                provider: Provider::Openai,
+                created_at: storage.record_timestamp().unwrap(),
+                audio: Some(crate::records::AudioArtifact {
+                    file_name: audio_name.clone(),
+                    duration_ms: 500,
+                }),
+                error: None,
+                usage: None,
+                events: Vec::new(),
+            })
+            .unwrap();
+        let legacy = -storage.save_transcript("legacy source").unwrap();
+        let retained = -storage.save_transcript("keep this").unwrap();
+        for record_id in [id, legacy] {
+            storage
+                .save_record_analysis(
+                    record_id,
+                    None,
+                    Some(Tokens {
+                        input: 100,
+                        cached: 0,
+                        output: 20,
+                    }),
+                )
+                .unwrap();
+            let connection = storage.connection().unwrap();
+            for (table, data) in [
+                ("record_note_sources", "[]"),
+                ("record_diagrams", r#"{"nodes":[],"edges":[]}"#),
+                ("record_segment_edits", "{}"),
+            ] {
+                connection
+                    .execute(
+                        &format!("INSERT INTO {table} (record_id,data) VALUES (?1,?2)"),
+                        params![record_id, data],
+                    )
+                    .unwrap();
+            }
+        }
+        // Invalid filenames must not delete files outside the recording directory or the record.
+        storage
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE records SET audio_file='../outside.wav' WHERE id=?1",
+                [id],
+            )
+            .unwrap();
+        assert!(storage.delete_record(id, &directory).is_err());
+        assert_eq!(storage.list_records().unwrap().len(), 3);
+        assert_eq!(storage.list_usage().unwrap().len(), 2);
+        storage
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE records SET audio_file=?1 WHERE id=?2",
+                params![audio_name, id],
+            )
+            .unwrap();
+        storage.delete_record(id, &directory).unwrap();
+        assert!(!directory.join(&audio_name).exists());
+        storage.delete_record(legacy, &directory).unwrap();
+        assert!(storage.delete_record(id, &directory).is_err());
+        assert!(storage.delete_record(i64::MIN, &directory).is_err());
+        assert!(storage.get_record(id).is_err());
+        assert!(storage.get_record(legacy).is_err());
+        assert_eq!(storage.list_records().unwrap()[0].id, retained);
+        let usage = storage.list_usage().unwrap();
+        assert_eq!(usage.len(), 2);
+        assert!(
+            usage.iter().all(
+                |entry| entry.record_id.is_none() && matches!(entry.mode, SessionMode::Meeting)
+            )
+        );
+        let connection = storage.connection().unwrap();
+        for table in [
+            "record_insights",
+            "record_note_sources",
+            "record_diagrams",
+            "record_segment_edits",
+            "legacy_record_edits",
+        ] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        std::fs::remove_dir(directory).unwrap();
     }
 
     #[test]

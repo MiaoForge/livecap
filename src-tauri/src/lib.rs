@@ -299,6 +299,15 @@ fn delete_transcript(storage: State<'_, Storage>, id: i64) -> Result<(), String>
 }
 
 #[tauri::command]
+fn delete_record(
+    storage: State<'_, Storage>,
+    directory: State<'_, RecordingsDirectory>,
+    id: i64,
+) -> Result<(), String> {
+    storage.delete_record(id, &directory.0)
+}
+
+#[tauri::command]
 fn list_records(storage: State<'_, Storage>) -> Result<Vec<RecordSummary>, String> {
     storage.list_records()
 }
@@ -499,6 +508,7 @@ pub fn run() {
             list_transcripts,
             delete_transcript,
             list_records,
+            delete_record,
             list_usage,
             list_knowledge_usage,
             storage_info,
