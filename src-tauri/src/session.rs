@@ -1,6 +1,7 @@
 use crate::{
     audio,
     audio_feed::{AudioFeed, Packet},
+    credentials::Credentials,
     knowledge::{Generation, KnowledgeCache, merge_asr_terms},
     knowledge_generate, luna, openai,
     records::{AudioArtifact, NewRecord, Recorder, RecordingsDirectory, SessionMode, WavWriter},
@@ -196,7 +197,9 @@ impl Sessions {
             let include_notes = settings.auto_generate_meeting_notes;
             let can_summarize = mode == SessionMode::Meeting
                 && (provider == Provider::Openai
-                    || crate::storage::api_key(Provider::Openai)
+                    || app
+                        .state::<Credentials>()
+                        .get(Provider::Openai)
                         .ok()
                         .flatten()
                         .is_some());

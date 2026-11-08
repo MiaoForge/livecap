@@ -63,3 +63,11 @@ sh scripts/diagnose-macos-audio.sh --tone
 The probe uses the same native capture bridge, requests permission, plays a quiet built-in test sound, and reports packet counts and peak PCM amplitude for eight seconds. It does not connect to a provider or save captured audio. A nonzero peak verifies audible capture; no nonzero samples or a capture error produces a nonzero exit status. Without `--tone`, play audio yourself during the test. The terminal's permission identity can differ from the installed application's identity.
 
 If capture works in the probe but the app stays at “waiting for speech”, inspect the development terminal for errors. A rustls message about ambiguous `ring` and `aws-lc-rs` providers indicates failure before capture starts. Livecap initializes its TLS provider at process startup; completely restart an older running development process after updating. In development builds, unwinding session task panics are converted to errors so normal record persistence and session cleanup can still run.
+
+## Keychain authorization
+
+macOS may ask for permission when Livecap first reads an existing provider key. Choose **Always Allow** for a trusted installed copy if you want macOS to remember access for that application; **Allow Once** grants only that read. See [Apple's Keychain access guidance](https://support.apple.com/en-gb/guide/mac-help/kychn002/26/mac/26).
+
+Livecap reads each provider key at most once after a successful read during one app process, then reuses it in native memory for captions, meetings, knowledge preparation, and record analysis. Concurrent requests share the same read. Saving or deleting a key updates the cache only after the system credential store succeeds. Cached secret allocations are zeroed when replaced or dropped; keys are never returned to the frontend or stored in settings. If access is denied, a subsequent attempt can ask again.
+
+This cache does not replace macOS authorization. A newly rebuilt or updated ad-hoc application can require authorization again, even after **Always Allow** on the previous build. Changing a key directly in Keychain Access requires restarting Livecap to refresh its in-memory copy. Livecap does not modify the item's access-control policy or grant access to other applications.

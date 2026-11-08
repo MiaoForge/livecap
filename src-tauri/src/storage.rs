@@ -931,23 +931,6 @@ fn decode_settings(data: &str) -> serde_json::Result<Settings> {
     serde_json::from_value(value)
 }
 
-pub fn credential(provider: Provider) -> Result<keyring::Entry, String> {
-    let account = match provider {
-        Provider::Soniox => "soniox",
-        Provider::Openai => "openai",
-    };
-    keyring::Entry::new("com.chenmiaoi.livecap", account)
-        .map_err(|_| "无法访问系统安全凭据存储。".into())
-}
-
-pub fn api_key(provider: Provider) -> Result<Option<String>, String> {
-    match credential(provider)?.get_password() {
-        Ok(key) => Ok(Some(key)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err(format!("无法读取 {} API Key。", provider.label())),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

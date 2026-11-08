@@ -385,7 +385,7 @@ async fn replay_topic_benchmark(
 #[tokio::test]
 #[ignore = "opt-in live OpenAI A/B test using public or explicitly authorized audio"]
 async fn live_meeting_topic_benchmark() {
-    use crate::{knowledge::KnowledgeCache, storage};
+    use crate::knowledge::KnowledgeCache;
     use std::{fs, path::PathBuf};
 
     let root = PathBuf::from(std::env::var_os("LIVECAP_TOPIC_BENCH").unwrap());
@@ -410,7 +410,8 @@ async fn live_meeting_topic_benchmark() {
         .ok()
         .and_then(|terms| serde_json::from_str(&terms).ok())
         .unwrap_or_default();
-    let key = storage::api_key(Provider::Openai)
+    let key = crate::credentials::Credentials::default()
+        .get(Provider::Openai)
         .unwrap()
         .expect("OpenAI credential is missing");
     let auth = authorization(&key).unwrap();

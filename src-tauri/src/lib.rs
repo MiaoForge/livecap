@@ -1,5 +1,6 @@
 mod audio;
 mod audio_feed;
+mod credentials;
 mod knowledge;
 mod knowledge_documents;
 mod knowledge_generate;
@@ -16,6 +17,7 @@ mod tls;
 mod transcript;
 mod usage;
 
+use credentials::Credentials;
 use knowledge::{Generation, KnowledgeCache, KnowledgeRequest};
 use records::{
     AudioChunk, RecordDetail, RecordPatch, RecordSummary, RecordingsDirectory, SessionMode,
@@ -55,25 +57,24 @@ fn save_settings(storage: State<'_, Storage>, settings: Settings) -> Result<(), 
 }
 
 #[tauri::command]
-fn has_api_key(provider: Provider) -> Result<bool, String> {
-    storage::api_key(provider).map(|key| key.is_some())
+fn has_api_key(credentials: State<'_, Credentials>, provider: Provider) -> Result<bool, String> {
+    credentials.get(provider).map(|key| key.is_some())
 }
 
 #[tauri::command]
-fn save_api_key(provider: Provider, key: String) -> Result<(), String> {
+fn save_api_key(
+    credentials: State<'_, Credentials>,
+    provider: Provider,
+    key: String,
+) -> Result<(), String> {
     let key = key.trim();
     session::authorization(key)?;
-    storage::credential(provider)?
-        .set_password(key)
-        .map_err(|_| format!("无法保存 {} API Key。", provider.label()))
+    credentials.save(provider, key)
 }
 
 #[tauri::command]
-fn delete_api_key(provider: Provider) -> Result<(), String> {
-    match storage::credential(provider)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err(format!("无法删除 {} API Key。", provider.label())),
-    }
+fn delete_api_key(credentials: State<'_, Credentials>, provider: Provider) -> Result<(), String> {
+    credentials.delete(provider)
 }
 
 #[tauri::command]
@@ -101,7 +102,9 @@ fn start_session(
     if session_id.is_empty() || session_id.len() > 100 {
         return Err("会话标识无效。".into());
     }
-    let key = storage::api_key(provider)?
+    let key = app
+        .state::<Credentials>()
+        .get(provider)?
         .ok_or_else(|| format!("请先保存 {} API Key。", provider.label()))?;
     let cache = if settings.target_language.supports_knowledge() {
         storage.load_knowledge()?.filter(|cache| cache.enabled)
@@ -161,7 +164,10 @@ async fn generate_knowledge(
     }
     request.validate()?;
     let mut ticket = generation.begin()?;
-    let key = storage::api_key(Provider::Openai)?.ok_or("请先保存 OpenAI API Key。")?;
+    let key = app
+        .state::<Credentials>()
+        .get(Provider::Openai)?
+        .ok_or("请先保存 OpenAI API Key。")?;
     let authorization = session::authorization(&key)?;
     drop(key);
     let mut cache = ticket
@@ -364,7 +370,7 @@ pub(crate) async fn summarize_record(
         Some(language) => language,
         None => storage.load_settings()?.target_language,
     };
-    let auth = record_authorization()?;
+    let auth = record_authorization(app)?;
     let (result, usage) =
         record_ai::summarize(luna::ENDPOINT, auth, input, language, include_notes).await;
     let generated = result
@@ -393,7 +399,7 @@ async fn ask_record(
     }
     let record = storage.get_record(id)?;
     let input = record_ai::Input::from_record(&record)?;
-    let auth = record_authorization()?;
+    let auth = record_authorization(&app)?;
     let (result, usage) = record_ai::analyze(
         luna::ENDPOINT,
         auth,
@@ -416,14 +422,20 @@ fn require_record_consent(consent: bool) -> Result<(), String> {
     }
 }
 
-fn record_authorization() -> Result<tokio_tungstenite::tungstenite::http::HeaderValue, String> {
-    let key = storage::api_key(Provider::Openai)?.ok_or("请先保存 OpenAI API Key。")?;
+fn record_authorization(
+    app: &AppHandle,
+) -> Result<tokio_tungstenite::tungstenite::http::HeaderValue, String> {
+    let key = app
+        .state::<Credentials>()
+        .get(Provider::Openai)?
+        .ok_or("请先保存 OpenAI API Key。")?;
     session::authorization(&key)
 }
 
 pub fn run() {
     tls::initialize();
     tauri::Builder::default()
+        .manage(Credentials::default())
         .manage(Sessions::default())
         .manage(Generation::default())
         .setup(|app| {

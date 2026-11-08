@@ -1996,6 +1996,7 @@ dependencies = [
  "tokio-tungstenite",
  "uuid",
  "windows",
+ "zeroize",
 ]
 
 [[package]]
