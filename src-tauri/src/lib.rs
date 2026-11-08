@@ -228,6 +228,7 @@ fn open_knowledge_source(storage: State<'_, Storage>, url: String) -> Result<(),
     open_shell_item(std::ffi::OsStr::new(url.as_str()))
 }
 
+#[cfg(target_os = "windows")]
 fn open_shell_item(item: &std::ffi::OsStr) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::{
@@ -251,6 +252,18 @@ fn open_shell_item(item: &std::ffi::OsStr) -> Result<(), String> {
     } else {
         Err("无法打开所选位置。".into())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn open_shell_item(item: &std::ffi::OsStr) -> Result<(), String> {
+    // Pass the validated URI or local path as one argument, without a shell.
+    std::process::Command::new("/usr/bin/open")
+        .arg(item)
+        .status()
+        .map_err(|_| "无法打开所选位置。".to_string())?
+        .success()
+        .then_some(())
+        .ok_or_else(|| "无法打开所选位置。".into())
 }
 
 #[tauri::command]

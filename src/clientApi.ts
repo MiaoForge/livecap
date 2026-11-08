@@ -112,7 +112,7 @@ export function api<T>(
   args?: Record<string, unknown>,
 ): Promise<T> {
   if (!desktop)
-    return Promise.reject(new Error("请在 Windows 客户端中使用此功能。"));
+    return Promise.reject(new Error("请在桌面客户端中使用此功能。"));
   return invoke<T>(command, args);
 }
 export const money = (v: number | null | undefined) =>

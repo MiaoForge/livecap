@@ -302,7 +302,7 @@ export function KnowledgeSettings({
               : generating
                 ? "正在查找资料并整理知识缓存…"
                 : !desktop
-                  ? "在 Windows 桌面端可生成缓存。"
+                  ? "在桌面端可生成缓存。"
                   : !hasKey
                     ? "请在下方保存 OpenAI 密钥后生成。"
                     : !canGenerate

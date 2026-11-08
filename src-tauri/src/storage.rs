@@ -948,7 +948,7 @@ pub fn credential(provider: Provider) -> Result<keyring::Entry, String> {
         Provider::Openai => "openai",
     };
     keyring::Entry::new("com.chenmiaoi.livecap", account)
-        .map_err(|_| "无法访问 Windows 凭据管理器。".into())
+        .map_err(|_| "无法访问系统安全凭据存储。".into())
 }
 
 pub fn api_key(provider: Provider) -> Result<Option<String>, String> {

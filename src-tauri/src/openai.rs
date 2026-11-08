@@ -383,7 +383,7 @@ impl Connection {
                 _ = &mut *stopped => return self.finish(packets, emit).await,
                 response = self.socket.next() => self.receive(parse(response)?, emit)?,
                 packet = packets.recv() => {
-                    self.packet(packet.ok_or("Windows 音频采集已停止。")?, emit).await?;
+                    self.packet(packet.ok_or("系统音频采集已停止。")?, emit).await?;
                 }
             }
         }

@@ -534,9 +534,7 @@ function App() {
       setKey("");
       setKeys((current) => ({ ...current, [provider]: !remove }));
       setNotice(
-        remove
-          ? `${name} 密钥已移除`
-          : `${name} 密钥已保存到 Windows 凭据管理器`,
+        remove ? `${name} 密钥已移除` : `${name} 密钥已保存到系统安全凭据存储`,
       );
     } catch (reason) {
       reportError(reason);
@@ -1047,7 +1045,7 @@ function App() {
               </span>
             </label>
             <p>
-              各服务的密钥分别保存在 Windows 凭据管理器中。
+              各服务的密钥分别保存在系统安全凭据存储中。
               {settingsDraft.provider !== settings.provider &&
                 "保存设置后才会切换服务。"}
             </p>
@@ -1216,7 +1214,7 @@ function App() {
                     ? "正在读取…"
                     : desktop
                       ? "还没有手动保存的字幕。"
-                      : "在 Windows 桌面端可以保存和查看字幕记录。"}
+                      : "在桌面端可以保存和查看字幕记录。"}
                 </p>
               )}
             </div>
@@ -1245,7 +1243,7 @@ function App() {
         >
           {prompt === "live" && (
             <p>
-              Livecap 会把 Windows 默认播放设备上的音频发送给{" "}
+              Livecap 会把系统播放设备上的音频发送给{" "}
               {providerNames[settings.provider]}
               ，其中可能包含其他应用的声音和系统通知。
               {settings.provider === "openai"

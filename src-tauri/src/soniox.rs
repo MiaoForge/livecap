@@ -196,7 +196,7 @@ impl Connection {
                 }
                 packet = packets.recv() => {
                     let Some(packet) = packet else {
-                        return Err("Windows 音频采集已停止。".into());
+                        return Err("系统音频采集已停止。".into());
                     };
                     if last_level.elapsed() >= level_interval {
                         emit(StreamEvent::AudioLevel(audio::level(&packet)));

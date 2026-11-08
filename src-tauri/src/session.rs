@@ -437,8 +437,8 @@ async fn run(
         result = timeout(soniox::IO_TIMEOUT, ready_rx) => {
             match result {
                 Ok(Ok(())) => mark_listening(app).map(|()| true),
-                Ok(Err(_)) => Err("无法启动 Windows 音频采集。".into()),
-                Err(_) => Err("启动 Windows 音频采集超时。".into()),
+                Ok(Err(_)) => Err("无法启动系统音频采集。".into()),
+                Err(_) => Err("启动系统音频采集超时。".into()),
             }
         }
     };
@@ -500,7 +500,7 @@ async fn run(
         }
         Connection::Soniox(socket) => drop(socket),
     }
-    let (artifact, capture_result) = capture.await.map_err(|_| "Windows 音频采集意外停止。")??;
+    let (artifact, capture_result) = capture.await.map_err(|_| "系统音频采集意外停止。")??;
     archive.audio = artifact;
     capture_result?;
     result

@@ -443,7 +443,7 @@ export function ProductSettings({
                   </button>
                 ))}
               </div>
-              <Row title="API Key" description="保存在 Windows 凭据管理器">
+              <Row title="API Key" description="保存在系统安全凭据存储">
                 <span
                   className={
                     "connection-status " + (keys[s.provider] ? "connected" : "")
