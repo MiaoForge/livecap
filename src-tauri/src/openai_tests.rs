@@ -50,18 +50,15 @@ async fn reply(socket: &mut TcpStream, status: &str, response: Value) {
 }
 
 #[test]
-fn realtime_config_uses_24khz_and_valid_keywords() {
-    let config = config(
-        &["C++".into(), "bad<term".into(), "bad\nterm".into()],
-        Language::Zh,
-    );
+fn realtime_config_auto_detects_language_and_uses_24khz_with_valid_keywords() {
+    let config = config(&["C++".into(), "bad<term".into(), "bad\nterm".into()]);
     let input = &config["session"]["audio"]["input"];
     assert_eq!(config["type"], "session.update");
     assert_eq!(config["session"]["type"], "transcription");
     assert_eq!(input["format"], json!({"type":"audio/pcm","rate":24_000}));
     assert_eq!(input["transcription"]["model"], "gpt-live-transcribe");
     assert_eq!(input["transcription"]["keywords"], json!(["C++"]));
-    assert_eq!(input["transcription"]["languages"], json!(["zh-cn"]));
+    assert!(input["transcription"].get("languages").is_none());
     assert_eq!(input["transcription"]["delay"], "low");
     assert!(input["turn_detection"].is_null());
 }
@@ -230,13 +227,13 @@ async fn local_realtime_to_luna_preserves_drafts_and_orders_final_turns() {
         let stop = Mutex::new(Some(stop));
         let auth = authorization("local-only").unwrap();
         let mut connection = Connection::open(
-            &ws_url, &["Clang".into()], auth.clone(), "local-session".into(), Language::En, &mut stopped
+            &ws_url, &["Clang".into()], auth.clone(), "local-session".into(), &mut stopped
         ).await.unwrap().unwrap();
         let (translate_emit, mut translated) = mpsc::unbounded_channel();
         let glossary = vec!["Clang".into()];
         let terms = std::sync::Arc::new(crate::terms::SessionTerms::new("local-session".into(), &glossary, |_| {}));
         let knowledge = Some(crate::knowledge::sample_cache(&["Clang", "Sema", "IR"]));
-        let worker = luna::Worker::start(&http_url, auth, glossary, terms, knowledge, crate::language::LanguagePair::default(), move |event| {
+        let worker = luna::Worker::start(&http_url, auth, glossary, terms, knowledge, crate::language::Language::Zh, move |event| {
             translate_emit.send(event).unwrap();
         }).unwrap();
         let (tx, mut packets) = mpsc::channel(4);
@@ -323,7 +320,6 @@ async fn replay_topic_benchmark(
         &keywords,
         auth.clone(),
         session_id.clone(),
-        Language::En,
         &mut stopped,
     )
     .await?
@@ -337,7 +333,7 @@ async fn replay_topic_benchmark(
         glossary.to_vec(),
         terms.clone(),
         Some(cache),
-        crate::language::LanguagePair::default(),
+        crate::language::Language::Zh,
         {
             let translations = translations.clone();
             let warnings = warnings.clone();

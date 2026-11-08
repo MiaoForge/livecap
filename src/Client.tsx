@@ -111,7 +111,7 @@ function Captions({ snapshot }: { snapshot: Snapshot }) {
         el.scrollTop = el.scrollHeight;
       });
   }, [snapshot.captions]);
-  const live = selectLiveCaptions(snapshot.captions);
+  const live = selectLiveCaptions(snapshot.captions, s.targetLanguage);
   const original = live.matchedSource ?? live.latestSource;
   return (
     <div
@@ -129,7 +129,7 @@ function Captions({ snapshot }: { snapshot: Snapshot }) {
       {s.captionMode !== "translation" && (
         <div className="native-original">
           {original?.segment.text ||
-            `${languageName(s.sourceLanguage)} → ${languageName(s.targetLanguage)}`}
+            `自动识别 → ${languageName(s.targetLanguage)}`}
         </div>
       )}
       {s.captionMode !== "translation" && live.sourceInProgress && (
@@ -741,8 +741,7 @@ function Workspace() {
                         系统音频
                       </h2>
                       <p>
-                        {languageName(settings.sourceLanguage)} →{" "}
-                        {languageName(settings.targetLanguage)} ·{" "}
+                        自动识别 → {languageName(settings.targetLanguage)} ·{" "}
                         {settings.provider === "openai" ? "OpenAI" : "Soniox"}
                       </p>
                     </div>
@@ -963,7 +962,6 @@ function Workspace() {
             {mode === "meeting" &&
             settings.autoLearnMeetingTerms &&
             settings.provider === "openai" &&
-            settings.sourceLanguage === "en" &&
             settings.targetLanguage === "zh"
               ? " 会后会自动查证并补充术语。"
               : ""}

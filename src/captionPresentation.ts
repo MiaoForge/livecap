@@ -14,6 +14,7 @@ interface LiveCaptionPresentation {
 
 export function selectLiveCaptions(
   captions: CaptionState,
+  targetLanguage?: string,
 ): LiveCaptionPresentation {
   const entries: CaptionDisplay[] = [
     ...captions.confirmed.map((segment) => ({ segment, draft: false })),
@@ -21,6 +22,10 @@ export function selectLiveCaptions(
   ];
   const sources = entries.filter(({ segment }) => segment.lane === "original");
   const latestSource = sources[sources.length - 1];
+  // A provider may emit only original text when speech is already in the target language.
+  if (targetLanguage && latestSource?.segment.language === targetLanguage) {
+    return { target: latestSource, matchedSource: latestSource, latestSource };
+  }
   const targets = entries.filter(
     ({ segment }) => segment.lane === "translation",
   );

@@ -8,7 +8,6 @@ export type Settings = {
   provider: Provider;
   fontSize: number;
   alwaysOnTop: boolean;
-  sourceLanguage: string;
   targetLanguage: string;
   captionMode: "both" | "translation" | "original";
   translationFirst: boolean;
@@ -97,7 +96,6 @@ export const defaults: Settings = {
   provider: "openai",
   fontSize: 24,
   alwaysOnTop: true,
-  sourceLanguage: "en",
   targetLanguage: "zh",
   captionMode: "both",
   translationFirst: true,

@@ -94,7 +94,6 @@ fn start_session(
         .into());
     }
     let settings = storage.load_settings()?;
-    settings.languages().validate()?;
     if settings.provider != provider {
         return Err("服务设置已更改，请重新确认后开始。".into());
     }
@@ -103,7 +102,7 @@ fn start_session(
     }
     let key = storage::api_key(provider)?
         .ok_or_else(|| format!("请先保存 {} API Key。", provider.label()))?;
-    let cache = if settings.languages().supports_knowledge() {
+    let cache = if settings.target_language.supports_knowledge() {
         storage.load_knowledge()?.filter(|cache| cache.enabled)
     } else {
         None

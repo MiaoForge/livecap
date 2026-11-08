@@ -140,7 +140,7 @@ impl Sessions {
         let auth = authorization(key)?;
         let learn_auth = (mode == SessionMode::Meeting
             && settings.provider == Provider::Openai
-            && settings.languages().supports_knowledge()
+            && settings.target_language.supports_knowledge()
             && settings.auto_learn_meeting_terms)
             .then(|| auth.clone());
         let mut slot = self.0.lock().map_err(|_| "无法读取转写状态。")?;
@@ -374,7 +374,7 @@ async fn run(
         knowledge,
     } = config;
     let session_id = terms.session_id.clone();
-    let languages = settings.languages();
+    let target_language = settings.target_language;
     // Both variants own a single similarly sized WebSocket.
     #[allow(clippy::large_enum_variant)]
     enum Connection {
@@ -403,7 +403,6 @@ async fn run(
                 &asr_terms,
                 auth.clone(),
                 session_id,
-                languages.source,
                 &mut stopped,
             )
             .await?
@@ -419,7 +418,7 @@ async fn run(
                 settings.terms,
                 terms,
                 knowledge,
-                languages,
+                target_language,
                 move |event| {
                     worker_meter.record(&event);
                     if let Some(recorder) = &worker_recorder {

@@ -1,6 +1,6 @@
 use crate::{
     knowledge::{KnowledgeCache, KnowledgeUsage, MAX_KNOWLEDGE_SOURCES},
-    language::{Language, LanguagePair},
+    language::Language,
     records::{
         NewRecord, RecordDetail, RecordInsights, RecordPatch, RecordStatus, RecordSummary,
         SessionMode, UsageEntry,
@@ -23,7 +23,6 @@ pub struct Settings {
     pub provider: Provider,
     pub font_size: u32,
     pub always_on_top: bool,
-    pub source_language: Language,
     pub target_language: Language,
     pub caption_mode: CaptionMode,
     pub translation_first: bool,
@@ -59,7 +58,6 @@ impl Default for Settings {
             provider: Provider::default(),
             font_size: 24,
             always_on_top: true,
-            source_language: Language::En,
             target_language: Language::Zh,
             caption_mode: CaptionMode::Both,
             translation_first: true,
@@ -68,15 +66,6 @@ impl Default for Settings {
             onboarding_complete: false,
             auto_learn_meeting_terms: false,
             auto_generate_meeting_notes: true,
-        }
-    }
-}
-
-impl Settings {
-    pub fn languages(&self) -> LanguagePair {
-        LanguagePair {
-            source: self.source_language,
-            target: self.target_language,
         }
     }
 }
@@ -606,7 +595,6 @@ impl Storage {
     }
 
     pub fn save_settings(&self, mut settings: Settings) -> Result<(), String> {
-        settings.languages().validate()?;
         if !(0.6..=1.0).contains(&settings.caption_opacity) {
             return Err("字幕不透明度需在 60% 到 100% 之间。".into());
         }
@@ -938,6 +926,7 @@ fn decode_settings(data: &str) -> serde_json::Result<Settings> {
     let mut value: serde_json::Value = serde_json::from_str(data)?;
     if let Some(settings) = value.as_object_mut() {
         settings.remove("translationProvider");
+        settings.remove("sourceLanguage");
     }
     serde_json::from_value(value)
 }
@@ -965,11 +954,27 @@ mod tests {
     use crate::knowledge::{Generation, sample_cache};
 
     #[test]
+    fn migrates_old_source_selection_without_changing_target_or_preferences() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        let settings = decode_settings(
+            r#"{"sourceLanguage":"fr","targetLanguage":"fr","fontSize":30,"alwaysOnTop":false}"#,
+        )
+        .unwrap();
+        storage.save_settings(settings).unwrap();
+        let saved = serde_json::to_value(storage.load_settings().unwrap()).unwrap();
+        assert!(saved.get("sourceLanguage").is_none());
+        assert_eq!(saved["targetLanguage"], "fr");
+        assert_eq!(saved["fontSize"], 30);
+        assert_eq!(saved["alwaysOnTop"], false);
+        assert!(decode_settings(r#"{"targetLanguage":"unknown"}"#).is_err());
+    }
+
+    #[test]
     fn old_settings_receive_caption_defaults_and_validate_new_fields() {
         let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
         let old = decode_settings(r#"{"fontSize":30,"alwaysOnTop":false}"#).unwrap();
         let initial = serde_json::to_value(old).unwrap();
-        assert_eq!(initial["sourceLanguage"], "en");
+        assert!(initial.get("sourceLanguage").is_none());
         assert_eq!(initial["targetLanguage"], "zh");
         assert_eq!(initial["captionMode"], "both");
         assert_eq!(initial["translationFirst"], true);
@@ -978,7 +983,7 @@ mod tests {
         assert_eq!(initial["onboardingComplete"], false);
         assert_eq!(initial["fontSize"], 30);
         let valid: Settings = serde_json::from_value(serde_json::json!({
-            "sourceLanguage":"fr", "targetLanguage":"ja", "captionMode":"translation",
+            "targetLanguage":"ja", "captionMode":"translation",
             "captionTheme":"light", "captionOpacity":0.65, "onboardingComplete":true
         }))
         .unwrap();
@@ -987,14 +992,12 @@ mod tests {
         assert_eq!(saved["captionMode"], "translation");
         assert_eq!(saved["captionTheme"], "light");
         assert_eq!(saved["onboardingComplete"], true);
-        assert!(
-            storage
-                .save_settings(Settings {
-                    target_language: Language::En,
-                    ..Settings::default()
-                })
-                .is_err()
-        );
+        storage
+            .save_settings(Settings {
+                target_language: Language::En,
+                ..Settings::default()
+            })
+            .unwrap();
         assert!(
             storage
                 .save_settings(Settings {

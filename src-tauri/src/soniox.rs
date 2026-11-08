@@ -37,7 +37,7 @@ fn config(settings: &Settings) -> Value {
         "audio_format": "pcm_s16le",
         "sample_rate": SAMPLE_RATE,
         "num_channels": 1,
-        "language_hints": [settings.source_language.code()],
+        "enable_language_identification": true,
         "enable_speaker_diarization": true,
         "translation": { "type": "one_way", "target_language": settings.target_language.code() },
         "context": {

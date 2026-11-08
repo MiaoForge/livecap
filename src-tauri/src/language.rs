@@ -47,38 +47,7 @@ impl Language {
         }
     }
 
-    pub fn openai_hint(self) -> &'static str {
-        match self {
-            Self::Zh => "zh-cn",
-            _ => self.code(),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct LanguagePair {
-    pub source: Language,
-    pub target: Language,
-}
-
-impl Default for LanguagePair {
-    fn default() -> Self {
-        Self {
-            source: Language::En,
-            target: Language::Zh,
-        }
-    }
-}
-
-impl LanguagePair {
-    pub fn validate(self) -> Result<(), String> {
-        if self.source == self.target {
-            return Err("原文语言与译文语言需不同。".into());
-        }
-        Ok(())
-    }
-
     pub fn supports_knowledge(self) -> bool {
-        self.source == Language::En && self.target == Language::Zh
+        self == Self::Zh
     }
 }

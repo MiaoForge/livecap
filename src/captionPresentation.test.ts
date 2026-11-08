@@ -148,4 +148,22 @@ describe("live caption selection", () => {
     expect(current.target).toBeUndefined();
     expect(current.latestSource?.segment.text).toBe("Hello");
   });
+  it("shows speech already in the target language instead of an older translation", () => {
+    const state = applyCaptionTokens(createCaptionState(), [
+      source("old", "Hello", 1, true),
+      target("old", "你好", 1, true),
+      { ...source("new", "直接说中文", 1, true), language: "zh" },
+    ]);
+    expect(selectLiveCaptions(state, "zh").target?.segment.text).toBe(
+      "直接说中文",
+    );
+    expect(selectLiveCaptions(state, "ja").target?.segment.text).toBe("你好");
+  });
+
+  it("does not guess the language of unlabeled transcription", () => {
+    const state = applyCaptionTokens(createCaptionState(), [
+      source("new", "Bonjour", 1, true),
+    ]);
+    expect(selectLiveCaptions(state, "fr").target).toBeUndefined();
+  });
 });

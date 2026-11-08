@@ -171,10 +171,7 @@ export function CaptionPreview({ settings: s }: { settings: Settings }) {
         : s.targetLanguage === "en"
           ? "Focus on the conversation. Follow every word."
           : languageName(s.targetLanguage) + " · 译文预览";
-  const source =
-    s.sourceLanguage === "zh"
-      ? "把注意力留给对话，让字幕跟上每一句。"
-      : "Focus on the conversation. Follow every word.";
+  const source = "Focus on the conversation. Follow every word.";
   return (
     <div
       className={"product-caption-sample " + s.captionTheme}
@@ -361,36 +358,22 @@ export function ProductSettings({
           {tab === "language" && (
             <>
               <h2>语言与翻译</h2>
-              <Row title="语言方向">
-                <div className="language-pair">
-                  <select
-                    aria-label="原文语言"
-                    disabled={active}
-                    value={s.sourceLanguage}
-                    onChange={(e) => change({ sourceLanguage: e.target.value })}
-                  >
-                    {languages.map(([v, label]) => (
-                      <option value={v} key={v}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <span>→</span>
-                  <select
-                    aria-label="译文语言"
-                    disabled={active}
-                    value={s.targetLanguage}
-                    onChange={(e) => change({ targetLanguage: e.target.value })}
-                  >
-                    {languages
-                      .filter((l) => l[0] !== "auto")
-                      .map(([v, label]) => (
-                        <option value={v} key={v}>
-                          {label}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+              <Row
+                title="翻译为"
+                description="自动识别原文语言，统一翻译为所选语言"
+              >
+                <select
+                  aria-label="目标语言"
+                  disabled={active}
+                  value={s.targetLanguage}
+                  onChange={(e) => change({ targetLanguage: e.target.value })}
+                >
+                  {languages.map(([value, label]) => (
+                    <option value={value} key={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </Row>
               <Row title="字幕内容">
                 <Segments
@@ -566,7 +549,7 @@ export function ProductSettings({
               </Row>
               <Row
                 title="会后自动补充术语"
-                description="OpenAI 英译中会议结束后，将部分原文发给 Luna 识别候选。仅候选名称用于公开检索，查证后自动存入知识空间。会产生模型和搜索费用。"
+                description="OpenAI 会议在目标语言为中文时，结束后，将部分原文发给 Luna 识别候选。仅候选名称用于公开检索，查证后自动存入知识空间。会产生模型和搜索费用。"
               >
                 <button
                   type="button"

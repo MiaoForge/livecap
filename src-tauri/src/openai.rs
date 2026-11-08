@@ -1,6 +1,5 @@
 use crate::{
     audio,
-    language::Language,
     transcript::{StreamEvent, TranscriptEvent, TranscriptToken, TranslationStatus},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -51,7 +50,7 @@ pub fn valid_keyword(term: &str) -> bool {
     !term.contains(['<', '>', '\r', '\n'])
 }
 
-fn config(terms: &[String], source: Language) -> Value {
+fn config(terms: &[String]) -> Value {
     let keywords: Vec<_> = terms.iter().filter(|term| valid_keyword(term)).collect();
     json!({
         "type": "session.update",
@@ -62,7 +61,6 @@ fn config(terms: &[String], source: Language) -> Value {
                     "format": { "type": "audio/pcm", "rate": SAMPLE_RATE },
                     "transcription": {
                         "model": "gpt-live-transcribe",
-                        "languages": [source.openai_hint()],
                         "keywords": keywords,
                         "delay": "low",
                     },
@@ -137,7 +135,6 @@ fn current_draft_ends_sentence(
 pub struct Connection {
     socket: Socket,
     session_id: String,
-    source_language: Language,
     position: u64,
     pre_roll: Vec<u8>,
     turn: Option<Turn>,
@@ -153,13 +150,12 @@ impl Connection {
         terms: &[String],
         auth: HeaderValue,
         session_id: String,
-        source_language: Language,
         stopped: &mut oneshot::Receiver<()>,
     ) -> Result<Option<Self>, String> {
         tokio::select! {
             biased;
             _ = &mut *stopped => Ok(None),
-            result = timeout(OPEN_TIMEOUT, Self::handshake(endpoint, terms, auth, session_id, source_language)) => {
+            result = timeout(OPEN_TIMEOUT, Self::handshake(endpoint, terms, auth, session_id)) => {
                 result.map_err(|_| "连接 OpenAI 实时转录超时。")?.map(Some)
             }
         }
@@ -170,7 +166,6 @@ impl Connection {
         terms: &[String],
         auth: HeaderValue,
         session_id: String,
-        source_language: Language,
     ) -> Result<Self, String> {
         let mut request = endpoint.into_client_request().map_err(|_| NETWORK_ERROR)?;
         request.headers_mut().insert(AUTHORIZATION, auth);
@@ -186,7 +181,6 @@ impl Connection {
         let mut connection = Self {
             socket,
             session_id,
-            source_language,
             position: 0,
             pre_roll: Vec::new(),
             turn: None,
@@ -195,7 +189,7 @@ impl Connection {
             completed: VecDeque::new(),
             last_level: Instant::now() - Duration::from_millis(80),
         };
-        connection.send(config(terms, source_language)).await?;
+        connection.send(config(terms)).await?;
         loop {
             let response = parse(connection.socket.next().await)?;
             match response["type"].as_str() {
@@ -326,7 +320,6 @@ impl Connection {
                     id.into(),
                     draft.text.clone(),
                     draft.revision,
-                    self.source_language,
                     None,
                 )));
             }
@@ -361,7 +354,6 @@ impl Connection {
                         id,
                         text,
                         revision,
-                        self.source_language,
                         Some(turn),
                     )));
                 }
@@ -438,7 +430,6 @@ fn transcript(
     id: String,
     text: String,
     revision: u32,
-    source_language: Language,
     turn: Option<Pending>,
 ) -> TranscriptEvent {
     let time = |samples: u64| samples * 1000 / u64::from(SAMPLE_RATE);
@@ -448,7 +439,7 @@ fn transcript(
             text,
             is_final: turn.is_some(),
             speaker: None,
-            language: Some(source_language.code().into()),
+            language: None,
             source_language: None,
             start_ms: turn.as_ref().map(|turn| time(turn.start)),
             end_ms: turn.as_ref().map(|turn| time(turn.end)),

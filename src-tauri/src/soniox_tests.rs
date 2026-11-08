@@ -32,15 +32,15 @@ fn soniox_config_uses_embedded_translation() {
 }
 
 #[test]
-fn soniox_config_uses_selected_language_hint_and_target() {
+fn soniox_config_detects_source_and_uses_selected_target() {
     use crate::language::Language;
     let settings = Settings {
-        source_language: Language::Ja,
         target_language: Language::De,
         ..Settings::default()
     };
     let config = config(&settings);
-    assert_eq!(config["language_hints"], json!(["ja"]));
+    assert!(config.get("language_hints").is_none());
+    assert_eq!(config["enable_language_identification"], true);
     assert_eq!(config["translation"]["target_language"], "de");
 }
 
