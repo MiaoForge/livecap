@@ -1,5 +1,5 @@
 use crate::{
-    knowledge::{KnowledgeCache, KnowledgeUsage, MAX_KNOWLEDGE_SOURCES},
+    knowledge::{KnowledgeCache, KnowledgeLibrary, KnowledgeUsage, MAX_KNOWLEDGE_SOURCES},
     language::Language,
     records::{
         NewRecord, RecordDetail, RecordInsights, RecordPatch, RecordStatus, RecordSummary,
@@ -122,6 +122,17 @@ impl Storage {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 data TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS knowledge_libraries (
+                id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL,
+                focus TEXT NOT NULL,
+                data TEXT NOT NULL,
+                UNIQUE(domain,focus)
+            );
+            INSERT OR IGNORE INTO knowledge_libraries (id,domain,focus,data)
+                SELECT 'legacy-' || lower(hex(randomblob(16))), json_extract(data,'$.domain'),
+                    coalesce(json_extract(data,'$.focus'),''),data FROM knowledge_cache
+                WHERE CASE WHEN json_valid(data) THEN json_type(data,'$.domain')='text' ELSE 0 END;
             CREATE TABLE IF NOT EXISTS knowledge_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT NOT NULL,
@@ -196,6 +207,43 @@ impl Storage {
     pub fn load_knowledge(&self) -> Result<Option<KnowledgeCache>, String> {
         let connection = self.connection()?;
         read_knowledge(&connection)
+    }
+
+    pub fn list_knowledge_libraries(&self) -> Result<Vec<KnowledgeLibrary>, String> {
+        {
+            let connection = self.connection()?;
+            read_knowledge_libraries(&connection)
+        }
+    }
+
+    pub fn active_knowledge(&self, topic: &str) -> Result<Option<KnowledgeCache>, String> {
+        Ok(crate::knowledge::combine_libraries(
+            self.list_knowledge_libraries()?,
+            topic,
+        ))
+    }
+
+    pub fn edit_knowledge_library(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<KnowledgeCache, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(|_| STORAGE_ERROR)?;
+        let data: String = transaction
+            .query_row(
+                "SELECT data FROM knowledge_libraries WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| STORAGE_ERROR)?
+            .ok_or("知识领域不存在。")?;
+        let mut cache = decode_knowledge(&data)?;
+        cache.enabled = enabled && !cache.entries.is_empty();
+        write_knowledge(&transaction, &cache)?;
+        transaction.commit().map_err(|_| STORAGE_ERROR)?;
+        Ok(cache)
     }
 
     pub fn record_timestamp(&self) -> Result<String, String> {
@@ -504,9 +552,10 @@ impl Storage {
         let usage = serde_json::to_string(&cache.usage).map_err(|_| STORAGE_ERROR)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(|_| STORAGE_ERROR)?;
-        if let Some(previous) = read_knowledge(&transaction)?
-            && ((previous.domain == cache.domain && previous.focus == cache.focus)
-                || previous.domain == crate::knowledge_generate::MEETING_AREA)
+        if let Some(previous) = read_knowledge_libraries(&transaction)?
+            .into_iter()
+            .map(|library| library.cache)
+            .find(|previous| previous.domain == cache.domain && previous.focus == cache.focus)
         {
             let learned = previous
                 .entries
@@ -581,7 +630,9 @@ impl Storage {
 
     pub fn clear_knowledge(&self) -> Result<(), String> {
         self.connection()?
-            .execute("DELETE FROM knowledge_cache WHERE id = 1", [])
+            .execute_batch(
+                "DELETE FROM knowledge_cache WHERE id = 1; DELETE FROM knowledge_libraries;",
+            )
             .map_err(|_| STORAGE_ERROR)?;
         Ok(())
     }
@@ -1001,17 +1052,48 @@ fn read_knowledge(connection: &Connection) -> Result<Option<KnowledgeCache>, Str
         })
         .optional()
         .map_err(|_| STORAGE_ERROR)?;
-    data.map(|data| {
-        let mut cache: KnowledgeCache = serde_json::from_str(&data).map_err(|_| STORAGE_ERROR)?;
-        cache.retain_spoken_terms();
-        cache.normalize_translations();
-        Ok(cache)
+    data.map(|data| decode_knowledge(&data)).transpose()
+}
+
+fn decode_knowledge(data: &str) -> Result<KnowledgeCache, String> {
+    let mut cache: KnowledgeCache = serde_json::from_str(data).map_err(|_| STORAGE_ERROR)?;
+    cache.retain_spoken_terms();
+    cache.normalize_translations();
+    Ok(cache)
+}
+
+fn read_knowledge_libraries(connection: &Connection) -> Result<Vec<KnowledgeLibrary>, String> {
+    let mut query = connection.prepare("SELECT id,data FROM knowledge_libraries ORDER BY json_extract(data,'$.updatedAt') DESC,id")
+        .map_err(|_| STORAGE_ERROR)?;
+    let rows = query
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|_| STORAGE_ERROR)?;
+    rows.map(|row| {
+        let (id, data) = row.map_err(|_| STORAGE_ERROR)?;
+        Ok(KnowledgeLibrary {
+            id,
+            cache: decode_knowledge(&data)?,
+        })
     })
-    .transpose()
+    .collect()
 }
 
 fn write_knowledge(connection: &Connection, cache: &KnowledgeCache) -> Result<(), String> {
     let data = serde_json::to_string(cache).map_err(|_| STORAGE_ERROR)?;
+    connection
+        .execute(
+            "INSERT INTO knowledge_libraries (id,domain,focus,data) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(domain,focus) DO UPDATE SET data=excluded.data",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                cache.domain,
+                cache.focus,
+                data
+            ],
+        )
+        .map_err(|_| STORAGE_ERROR)?;
     connection
         .execute(
             "INSERT INTO knowledge_cache (id, data) VALUES (1, ?1)
@@ -1667,6 +1749,80 @@ mod tests {
         assert_eq!(storage.load_settings().unwrap().terms, ["AST"]);
         storage.clear_knowledge().unwrap();
         assert!(storage.load_knowledge().unwrap().is_none());
+    }
+
+    #[test]
+    fn domains_persist_independently_and_enabled_libraries_are_combined() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        storage
+            .replace_knowledge(sample_cache(&["AST", "LLVM"]))
+            .unwrap();
+        let mut design = sample_cache(&["Figma", "LLVM"]);
+        design.domain = "Design".into();
+        design.focus = "Interfaces".into();
+        storage.replace_knowledge(design).unwrap();
+        let libraries = storage.list_knowledge_libraries().unwrap();
+        assert_eq!(libraries.len(), 2);
+        let compiler = libraries
+            .iter()
+            .find(|library| library.cache.domain == "Compiler engineering")
+            .unwrap();
+        let compiler_id = compiler.id.clone();
+        assert_eq!(compiler.cache.entries[0].term, "AST");
+        let combined = storage.active_knowledge("").unwrap().unwrap();
+        assert_eq!(combined.entries.len(), 3);
+        assert!(combined.entries.iter().any(|entry| entry.term == "AST"));
+        assert!(combined.entries.iter().any(|entry| entry.term == "Figma"));
+        storage.edit_knowledge_library(&compiler_id, false).unwrap();
+        let combined = storage.active_knowledge("").unwrap().unwrap();
+        assert!(!combined.entries.iter().any(|entry| entry.term == "AST"));
+        storage.replace_knowledge(sample_cache(&["Clang"])).unwrap();
+        let libraries = storage.list_knowledge_libraries().unwrap();
+        assert_eq!(libraries.len(), 2);
+        assert_eq!(
+            libraries
+                .iter()
+                .find(|library| library.cache.domain == "Compiler engineering")
+                .unwrap()
+                .id,
+            compiler_id
+        );
+        assert!(libraries.iter().any(|library| {
+            library
+                .cache
+                .entries
+                .iter()
+                .any(|entry| entry.term == "Figma")
+        }));
+        assert!(storage.edit_knowledge_library("missing", false).is_err());
+        storage.clear_knowledge().unwrap();
+        assert!(storage.list_knowledge_libraries().unwrap().is_empty());
+        assert!(storage.active_knowledge("").unwrap().is_none());
+    }
+
+    #[test]
+    fn legacy_knowledge_migrates_once_and_remains_saved_on_reopen() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE knowledge_cache (id INTEGER PRIMARY KEY, data TEXT NOT NULL);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO knowledge_cache VALUES (1, ?1)",
+                [serde_json::to_string(&sample_cache(&["AST"])).unwrap()],
+            )
+            .unwrap();
+        let storage = Storage::initialize(connection).unwrap();
+        let first = storage.list_knowledge_libraries().unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].cache.entries[0].term, "AST");
+        let connection = storage.0.into_inner().unwrap();
+        let reopened = Storage::initialize(connection).unwrap();
+        let second = reopened.list_knowledge_libraries().unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(first[0].id, second[0].id);
     }
 
     #[test]

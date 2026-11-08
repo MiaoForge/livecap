@@ -46,6 +46,70 @@ pub struct KnowledgeCache {
     pub usage: KnowledgeUsage,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct KnowledgeLibrary {
+    pub id: String,
+    pub cache: KnowledgeCache,
+}
+
+pub fn combine_libraries(libraries: Vec<KnowledgeLibrary>, topic: &str) -> Option<KnowledgeCache> {
+    let topic = topic.to_lowercase();
+    let words = topic_words(&topic);
+    let mut caches: Vec<_> = libraries
+        .into_iter()
+        .map(|library| library.cache)
+        .filter(|cache| cache.enabled && !cache.entries.is_empty())
+        .collect();
+    caches.sort_by_key(|cache| {
+        std::cmp::Reverse(
+            words
+                .iter()
+                .filter(|word| {
+                    format!("{} {}", cache.domain, cache.focus)
+                        .to_lowercase()
+                        .contains(**word)
+                })
+                .count(),
+        )
+    });
+    let mut output = KnowledgeCache {
+        domain: "多领域知识".into(),
+        focus: String::new(),
+        updated_at: String::new(),
+        enabled: true,
+        sources: Vec::new(),
+        entries: Vec::new(),
+        usage: KnowledgeUsage::default(),
+    };
+    let mut terms = HashSet::new();
+    let mut urls = HashSet::new();
+    let mut queues = Vec::new();
+    for cache in caches {
+        if !output.focus.is_empty() {
+            output.focus.push_str(" · ");
+        }
+        output.focus.push_str(&cache.domain);
+        queues.push((cache.domain, cache.focus, VecDeque::from(cache.entries)));
+        for source in cache.sources {
+            if urls.insert(source.url.clone()) {
+                output.sources.push(source);
+            }
+        }
+    }
+    // Interleave domains so a large library cannot consume the entire ASR keyword budget.
+    while queues.iter().any(|(_, _, entries)| !entries.is_empty()) {
+        for (domain, focus, entries) in &mut queues {
+            if let Some(mut entry) = entries.pop_front()
+                && terms.insert(entry.term.trim().to_lowercase())
+            {
+                entry.coverage_area = format!("{domain} {focus} {}", entry.coverage_area);
+                output.entries.push(entry);
+            }
+        }
+    }
+    (!output.entries.is_empty()).then_some(output)
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeUsage {
@@ -582,6 +646,44 @@ pub(crate) fn sample_cache(terms: &[&str]) -> KnowledgeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiple_libraries_share_keyword_budget_and_disabled_domains_are_excluded() {
+        let terms: Vec<_> = (0..150)
+            .map(|index| format!("CompilerTerm{index}"))
+            .collect();
+        let mut large = sample_cache(&terms.iter().map(String::as_str).collect::<Vec<_>>());
+        large.domain = "Programming".into();
+        let mut design = sample_cache(&["Figma", "Typography"]);
+        design.domain = "Design".into();
+        let mut disabled = sample_cache(&["DisabledTerm"]);
+        disabled.enabled = false;
+        let combined = combine_libraries(
+            vec![
+                KnowledgeLibrary {
+                    id: "programming".into(),
+                    cache: large,
+                },
+                KnowledgeLibrary {
+                    id: "design".into(),
+                    cache: design,
+                },
+                KnowledgeLibrary {
+                    id: "disabled".into(),
+                    cache: disabled,
+                },
+            ],
+            "",
+        )
+        .unwrap();
+        let keywords = merge_asr_terms(&[], Some(&combined), "");
+        assert!(keywords.iter().any(|term| term == "Figma"));
+        assert!(keywords.iter().any(|term| term == "CompilerTerm0"));
+        assert!(!keywords.iter().any(|term| term == "DisabledTerm"));
+        assert_eq!(combined.sources.len(), 1);
+        assert_eq!(combined.entries.len(), 152);
+        assert!(combine_libraries(Vec::new(), "").is_none());
+    }
 
     #[test]
     fn spoken_vocabulary_rejects_code_syntax_but_preserves_established_names() {

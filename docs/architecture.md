@@ -15,7 +15,7 @@ Livecap uses React and TypeScript for the interface and Rust for its Windows and
 
 The independent caption window receives caption state from the main window. Meeting audio is written to WAV files and replayed alongside transcript segments. The application stores API keys separately through Windows Credential Manager or macOS Keychain.
 
-Knowledge preparation keeps its previous cache until a replacement passes validation. Usage accounting keeps knowledge preparation separate from live sessions and distinguishes known estimates from incomplete usage.
+Knowledge libraries are stored independently by domain and focus, with stable IDs and an enable flag per library. Existing single-cache data migrates on database initialization. Preparation keeps the previous library until a replacement passes validation; preparing another domain preserves all other libraries. Sessions capture a combined snapshot of enabled libraries at startup. Entries are interleaved across libraries before bounded ASR keyword selection so one large domain does not consume the entire budget. Usage accounting keeps knowledge preparation separate from live sessions and distinguishes known estimates from incomplete usage.
 
 The macOS audio adapter links a Swift ScreenCaptureKit bridge at build time. A serial callback queue converts captured audio to mono PCM16 at the provider rate (16 kHz or 24 kHz). Idle periods produce silence so recording timelines retain pauses. Capture runs on a native worker; shutdown stops the stream and drains callbacks before releasing Rust state. No screen frames are registered for output. The caption window uses Tauri's macOS private API support for transparency.
 

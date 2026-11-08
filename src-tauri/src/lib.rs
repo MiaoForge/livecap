@@ -109,7 +109,7 @@ async fn start_session(
         .get(provider)?
         .ok_or_else(|| format!("请先保存 {} API Key。", provider.label()))?;
     let cache = if settings.target_language.supports_knowledge() {
-        storage.load_knowledge()?.filter(|cache| cache.enabled)
+        storage.active_knowledge(meeting_topic.as_deref().unwrap_or_default())?
     } else {
         None
     };
@@ -154,6 +154,13 @@ fn dismiss_learned_term(
 #[tauri::command]
 fn load_knowledge(storage: State<'_, Storage>) -> Result<Option<KnowledgeCache>, String> {
     storage.load_knowledge()
+}
+
+#[tauri::command]
+fn list_knowledge_libraries(
+    storage: State<'_, Storage>,
+) -> Result<Vec<knowledge::KnowledgeLibrary>, String> {
+    storage.list_knowledge_libraries()
 }
 
 #[tauri::command]
@@ -206,8 +213,12 @@ fn set_knowledge_enabled(
     storage: State<'_, Storage>,
     generation: State<'_, Generation>,
     enabled: bool,
+    library_id: Option<String>,
 ) -> Result<KnowledgeCache, String> {
     generation.edit(|| {
+        if let Some(id) = library_id {
+            return storage.edit_knowledge_library(&id, enabled);
+        }
         storage.edit_knowledge(|cache| cache.enabled = enabled && !cache.entries.is_empty())
     })
 }
@@ -239,7 +250,12 @@ fn clear_knowledge(
 
 #[tauri::command]
 fn open_knowledge_source(storage: State<'_, Storage>, url: String) -> Result<(), String> {
-    let cache = storage.load_knowledge()?.ok_or("暂无知识缓存。")?;
+    let libraries = storage.list_knowledge_libraries()?;
+    let cache = libraries
+        .iter()
+        .find(|library| library.cache.source_url(&url).is_some())
+        .map(|library| &library.cache)
+        .ok_or("来源链接不在已保存的知识库中。")?;
     let url = cache
         .source_url(&url)
         .ok_or("该链接不是已保存的公开资料来源。")?;
@@ -499,6 +515,7 @@ pub fn run() {
             set_meeting_paused,
             dismiss_learned_term,
             load_knowledge,
+            list_knowledge_libraries,
             generate_knowledge,
             cancel_knowledge,
             set_knowledge_enabled,
