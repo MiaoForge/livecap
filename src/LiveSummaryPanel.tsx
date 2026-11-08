@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./Notifications";
 import { Check, FileText, LoaderCircle, Sparkles } from "lucide-react";
 import { time } from "./clientApi";
 import type { LiveSummary } from "./clientApi";
@@ -49,8 +50,8 @@ export function LiveSummaryPanel({
         </span>
       </div>
       {summary?.error && (
-        <div className="session-summary-error" role="alert">
-          <p>{summary.error}</p>
+        <div className="session-summary-error">
+          <ErrorNotice message={summary.error} kind="warning" />
           {summary.phase === "unavailable" ? (
             <button onClick={onSettings}>连接服务 →</button>
           ) : (

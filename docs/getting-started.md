@@ -26,9 +26,13 @@ A failed update keeps the previous summary and retries with a delay. Ending the 
 
 Use **Knowledge Space** to prepare domain terminology. Preparation reads public sources and can incur model and search charges. The local cache stores entries, source links, and usage. A failed refresh preserves the existing cache. Automatic vocabulary focuses on spoken concepts, product names, and acronyms. Command switches, underscore-style code identifiers, and code expressions are excluded from new entries and filtered from existing caches when loaded. Explicitly saved personal vocabulary remains available.
 
+Save multiple domain libraries and enable them independently in **Knowledge Space**. Every enabled library contributes to the next session. Preparing a different domain or focus adds a library; refreshing the same domain and focus updates that library. Existing single-library data is migrated automatically.
+
 Knowledge preparation can run during a meeting or alongside session startup. The active session keeps the knowledge and ASR vocabulary captured when it started; preparing or enabling another library affects the next session without restarting capture. Only one knowledge generation can run at a time.
 
 The **Usage** page shows estimates based on recorded audio and provider-reported usage. Provider invoices determine actual charges.
+
+Errors, warnings, and operation notices appear in the bottom-right notification stack without moving the page. Errors remain until dismissed; warnings and informational notices close automatically and pause while hovered or focused. A failed audio segment that OpenAI reports as unintelligible is skipped while the meeting continues. Other transcription failures distinguish authentication, quota, rate limits, configuration, and service errors when the service supplies a code.
 
 ## Local data
 

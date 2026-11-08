@@ -1,8 +1,14 @@
+import { ErrorNotice } from "./Notifications";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { api, desktop, date, money } from "./clientApi";
-import type { Knowledge, KnowledgeProgress, Settings } from "./clientApi";
+import type {
+  Knowledge,
+  KnowledgeLibrary,
+  KnowledgeProgress,
+  Settings,
+} from "./clientApi";
 export type LearnedTerm = {
   term: string;
   occurrences: number;
@@ -31,6 +37,10 @@ const initialProgress: KnowledgeProgress = {
 };
 export function ProductKnowledge({
   cache,
+  libraries = [],
+  libraryId,
+  onSelectLibrary,
+  onToggleLibrary,
   onCache,
   hasKey,
   active,
@@ -42,6 +52,10 @@ export function ProductKnowledge({
   onSettings,
 }: {
   cache: Knowledge | null;
+  libraries?: KnowledgeLibrary[];
+  libraryId?: string;
+  onSelectLibrary?: (id: string) => void;
+  onToggleLibrary?: (id: string, enabled: boolean) => void;
   onCache: (k: Knowledge) => void;
   hasKey: boolean;
   active: boolean;
@@ -54,8 +68,8 @@ export function ProductKnowledge({
 }) {
   const [tab, setTab] = useState("library"),
     [preparing, setPreparing] = useState(!cache),
-    [domain, setDomain] = useState("编程"),
-    [focus, setFocus] = useState(""),
+    [domain, setDomain] = useState(cache?.domain ?? "编程"),
+    [focus, setFocus] = useState(cache?.focus ?? ""),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<string | null>(null),
     [generating, setGenerating] = useState(false),
@@ -231,6 +245,49 @@ export function ProductKnowledge({
           </button>
         )}
       </div>
+      {!!libraries.length && (
+        <section className="knowledge-libraries" aria-label="已保存的知识领域">
+          <header>
+            <h2>
+              我的领域 <small>{libraries.length}</small>
+            </h2>
+            <span>
+              {libraries.filter((library) => library.cache.enabled).length}{" "}
+              个已启用 · 可同时使用
+            </span>
+          </header>
+          <div className="knowledge-library-grid">
+            {libraries.map((library) => (
+              <article
+                key={library.id}
+                className={library.id === libraryId ? "selected" : ""}
+              >
+                <button
+                  className="knowledge-library-open"
+                  aria-pressed={library.id === libraryId}
+                  disabled={generating}
+                  onClick={() => onSelectLibrary?.(library.id)}
+                >
+                  <strong>{library.cache.domain}</strong>
+                  <span>{library.cache.focus || "通用领域资料"}</span>
+                  <small>{library.cache.entries.length} 条词汇</small>
+                </button>
+                <button
+                  className="knowledge-library-toggle"
+                  aria-label={`启用领域：${library.cache.domain} ${library.cache.focus}`}
+                  aria-pressed={library.cache.enabled}
+                  disabled={generating}
+                  onClick={() =>
+                    onToggleLibrary?.(library.id, !library.cache.enabled)
+                  }
+                >
+                  {library.cache.enabled ? "✓ 已启用" : "启用"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {active && (
         <p className="knowledge-session-notice" role="status">
           会议进行中，也可以准备知识库。本场会话使用启动时的知识与热词，新库从下一场会话生效。
@@ -238,14 +295,10 @@ export function ProductKnowledge({
       )}
       {preparing ? (
         <div className="knowledge-prepare">
-          {result && (
-            <div
-              className={result.cancelled ? "subtitle" : "native-error"}
-              role={result.cancelled ? "status" : "alert"}
-            >
-              {result.message}
-            </div>
-          )}
+          <ErrorNotice
+            message={result?.message}
+            kind={result?.cancelled ? "info" : "error"}
+          />
           {generating ? (
             <div className="knowledge-progress">
               <div className="preparation-header">
@@ -326,6 +379,7 @@ export function ProductKnowledge({
                   <button
                     className={"domain " + (domain === name ? "selected" : "")}
                     key={name}
+                    aria-pressed={domain === name}
                     onClick={() => {
                       setDomain(name);
                       setFocus("");
@@ -347,6 +401,7 @@ export function ProductKnowledge({
                       <button
                         className={"chip " + (focus === f ? "selected" : "")}
                         key={f}
+                        aria-pressed={focus === f}
                         onClick={() => setFocus(f)}
                       >
                         {f}
@@ -355,6 +410,7 @@ export function ProductKnowledge({
                 </div>
                 <input
                   className="knowledge-focus-input"
+                  aria-label="知识关注方向"
                   value={focus}
                   onChange={(e) => setFocus(e.target.value)}
                   placeholder="进一步描述关注方向，例如编译器前端与类型系统"
@@ -389,12 +445,14 @@ export function ProductKnowledge({
           <div className="knowledge-tabs">
             <button
               className={tab === "library" ? "active" : ""}
+              aria-pressed={tab === "library"}
               onClick={() => setTab("library")}
             >
               领域资料 <span>{cache?.entries.length || 0}</span>
             </button>
             <button
               className={tab === "learning" ? "active" : ""}
+              aria-pressed={tab === "learning"}
               onClick={() => setTab("learning")}
             >
               学习积累 <span>{settings.terms.length}</span>
@@ -561,6 +619,7 @@ export function ProductKnowledge({
                   onClick={() =>
                     void api<Knowledge>("set_knowledge_enabled", {
                       enabled: !cache?.enabled,
+                      libraryId,
                     })
                       .then(onCache)
                       .catch(fail)

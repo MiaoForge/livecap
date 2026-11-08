@@ -1,3 +1,4 @@
+import { NotificationProvider, ErrorNotice, useNotify } from "./Notifications";
 import { useEffect, useRef, useState, useMemo } from "react";
 import type { ReactNode } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -32,6 +33,7 @@ import type {
   RecordDetail,
   LiveSummary,
   Knowledge,
+  KnowledgeLibrary,
   KnowledgeUsage,
   KnowledgeUsageEntry,
 } from "./clientApi";
@@ -43,6 +45,8 @@ import {
 import type { CaptionState, TranscriptFrame } from "./captions";
 import { selectLiveCaptions } from "./captionPresentation";
 import "./Client.css";
+import { useHashNavigation } from "./useHashNavigation";
+import { UsageChart } from "./UsageChart";
 import { LiveSession } from "./LiveSession";
 import { WorkspaceNavigation } from "./WorkspaceNavigation";
 import { NotesDocument } from "./NotesDocument";
@@ -111,23 +115,36 @@ function Captions({ snapshot }: { snapshot: Snapshot }) {
       style={{ fontSize: s.fontSize }}
     >
       {s.captionMode !== "original" && (
-        <div className="native-translation">
+        <div
+          className="native-translation"
+          role="region"
+          aria-label="字幕译文"
+          tabIndex={0}
+        >
           {live.target?.segment.text || "等待发言…"}
         </div>
       )}
       {s.captionMode !== "translation" && (
-        <div className="native-original">
+        <div
+          className="native-original"
+          role="region"
+          aria-label="字幕原文"
+          tabIndex={0}
+        >
           {original?.segment.text ||
             `自动识别 → ${languageName(s.targetLanguage)}`}
         </div>
       )}
       {s.captionMode !== "translation" && live.sourceInProgress && (
-        <small>{live.sourceInProgress.segment.text}</small>
+        <small role="region" aria-label="待译原文" tabIndex={0}>
+          {live.sourceInProgress.segment.text}
+        </small>
       )}
     </div>
   );
 }
 function CaptionWindow() {
+  const notify = useNotify();
   useEffect(() => {
     document.body.classList.add("caption-surface");
     return () => document.body.classList.remove("caption-surface");
@@ -165,7 +182,8 @@ function CaptionWindow() {
     } as Record<string, string>
   )[status.state];
   return (
-    <div
+    <main
+      aria-label="独立字幕窗口"
       className={"native-caption-window " + settings.captionTheme}
       style={{
         backgroundColor:
@@ -174,6 +192,7 @@ function CaptionWindow() {
             : `rgba(250,252,247,${settings.captionOpacity})`,
       }}
     >
+      <h1 className="sr-only">实时字幕</h1>
       <header
         onMouseDown={(event) => {
           if (
@@ -197,7 +216,7 @@ function CaptionWindow() {
                 onClick={() =>
                   void api("set_meeting_paused", {
                     paused: status.state !== "paused",
-                  }).catch(console.error)
+                  }).catch((reason) => notify(String(reason)))
                 }
               >
                 {status.state === "paused" ? (
@@ -227,10 +246,17 @@ function CaptionWindow() {
         </div>
       </header>
       <Captions snapshot={snapshot} />
-    </div>
+    </main>
   );
 }
 export default function Client() {
+  return (
+    <NotificationProvider>
+      <ClientSurface />
+    </NotificationProvider>
+  );
+}
+function ClientSurface() {
   return new URLSearchParams(location.search).get("window") === "captions" ? (
     <CaptionWindow />
   ) : (
@@ -238,6 +264,7 @@ export default function Client() {
   );
 }
 function Workspace() {
+  const notify = useNotify();
   const [mode, setMode] = useState<"subtitle" | "meeting">("subtitle");
   const overlayPlaced = useRef(false);
   const modeRef = useRef(mode);
@@ -245,13 +272,17 @@ function Workspace() {
   const [onboardStep, setOnboardStep] = useState(0);
   const [learned, setLearned] = useState<LearnedTerm[]>([]);
   const [meetingTopic, setMeetingTopic] = useState("");
-  const [learningNotice, setLearningNotice] = useState("");
   const [usageEntries, setUsageEntries] = useState<UsageEntry[]>([]);
   const [knowledgeUsage, setKnowledgeUsage] = useState<KnowledgeUsageEntry[]>(
     [],
   );
-  const [page, setPage] = useState("home"),
-    [settings, setSettings] = useState(defaults),
+  const recordRequest = useRef(0);
+  const { page, navigate: setPage } = useHashNavigation(() => {
+    recordRequest.current += 1;
+    setRecord(null);
+    setQuery("");
+  });
+  const [settings, setSettings] = useState(defaults),
     [keys, setKeys] = useState<Partial<Record<Settings["provider"], boolean>>>(
       {},
     );
@@ -259,10 +290,13 @@ function Workspace() {
     [captions, setCaptions] = useState(createCaptionState),
     [usage, setUsage] = useState<Usage | null>(null),
     [records, setRecords] = useState<RecordSummary[]>([]),
-    [record, setRecord] = useState<RecordDetail | null>(null),
-    [knowledge, setKnowledge] = useState<Knowledge | null>(null);
-  const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
+    [record, setRecord] = useState<RecordDetail | null>(null);
+  const [libraries, setLibraries] = useState<KnowledgeLibrary[]>([]);
+  const [libraryId, setLibraryId] = useState<string | null>(null);
+  const selectedLibrary =
+    libraries.find((library) => library.id === libraryId) ?? libraries[0];
+  const knowledge = selectedLibrary?.cache ?? null;
+  const [busy, setBusy] = useState(false),
     [ready, setReady] = useState(false),
     [consent, setConsent] = useState(false),
     [generating, setGenerating] = useState(false),
@@ -275,9 +309,7 @@ function Workspace() {
   const [liveSummary, setLiveSummary] = useState<LiveSummary | null>(null);
   const [deleteRecord, setDeleteRecord] = useState<RecordSummary | null>(null);
   const [deletingRecord, setDeletingRecord] = useState(false);
-  const [deleteError, setDeleteError] = useState("");
   function requestDeleteRecord(item: RecordSummary) {
-    setDeleteError("");
     setDeleteRecord(item);
   }
   const openRecordId = useRef<number | null>(null);
@@ -286,7 +318,34 @@ function Workspace() {
     Record<number, SummaryStatus>
   >({});
   const fail = (e: unknown) =>
-    setError(String(e instanceof Error ? e.message : e));
+    notify(String(e instanceof Error ? e.message : e));
+  async function refreshLibraries(preferred?: Knowledge) {
+    const next = await api<KnowledgeLibrary[]>("list_knowledge_libraries");
+    setLibraries(next);
+    setLibraryId(
+      (current) =>
+        (preferred
+          ? next.find(
+              (library) =>
+                library.cache.domain === preferred.domain &&
+                library.cache.focus === preferred.focus,
+            )?.id
+          : undefined) ??
+        (next.some((library) => library.id === current)
+          ? current
+          : (next[0]?.id ?? null)),
+    );
+  }
+  const setKnowledge = (next: Knowledge) =>
+    void refreshLibraries(next).catch(fail);
+  async function toggleLibrary(id: string, enabled: boolean) {
+    try {
+      await api("set_knowledge_enabled", { libraryId: id, enabled });
+      await refreshLibraries();
+    } catch (error) {
+      fail(error);
+    }
+  }
   async function refresh() {
     const [r, u, k] = await Promise.all([
       api<RecordSummary[]>("list_records"),
@@ -322,7 +381,7 @@ function Workspace() {
           modeRef.current === "subtitle"
         )
           setCaptions(createCaptionState());
-        if (e.payload.message) setError(e.payload.message);
+        if (e.payload.message) notify(e.payload.message);
         if (["idle", "error"].includes(e.payload.state))
           void refresh().catch(fail);
       }),
@@ -340,7 +399,9 @@ function Workspace() {
       listen<{ candidates: LearnedTerm[] }>("session-terms", (e) =>
         setLearned(e.payload.candidates),
       ),
-      listen<string>("translation-warning", (e) => setError(e.payload)),
+      listen<string>("translation-warning", (e) =>
+        notify(e.payload, "warning"),
+      ),
       listen<{ id: number }>("records-updated", (event) => {
         void refresh().catch(fail);
         const id = event.payload.id;
@@ -359,14 +420,8 @@ function Workspace() {
         },
       ),
       listen("usage-updated", () => void refresh().catch(fail)),
-      listen<string>("knowledge-learning", (e) => setLearningNotice(e.payload)),
-      listen(
-        "knowledge-updated",
-        () =>
-          void api<Knowledge | null>("load_knowledge")
-            .then(setKnowledge)
-            .catch(fail),
-      ),
+      listen<string>("knowledge-learning", (e) => notify(e.payload, "info")),
+      listen("knowledge-updated", () => void refreshLibraries().catch(fail)),
       listen(
         "livecap-stop-request",
         () => void api("stop_session").catch(fail),
@@ -380,7 +435,7 @@ function Workspace() {
       api<Settings>("load_settings"),
       api<boolean>("has_api_key", { provider: "openai" }),
       api<boolean>("has_api_key", { provider: "soniox" }),
-      api<Knowledge | null>("load_knowledge"),
+      api<KnowledgeLibrary[]>("list_knowledge_libraries"),
       api<RecordSummary[]>("list_records"),
       api<UsageEntry[]>("list_usage"),
       api<KnowledgeUsageEntry[]>("list_knowledge_usage"),
@@ -390,7 +445,8 @@ function Workspace() {
         if (disposed) return;
         setSettings({ ...defaults, ...values[0] });
         setKeys({ openai: values[1], soniox: values[2] });
-        setKnowledge(values[3]);
+        setLibraries(values[3]);
+        setLibraryId(values[3][0]?.id ?? null);
         setRecords(values[4]);
         setUsageEntries(values[5]);
         setKnowledgeUsage(values[6]);
@@ -439,7 +495,6 @@ function Workspace() {
   async function start() {
     setConsent(false);
     setBusy(true);
-    setError("");
     const next = createCaptionState();
     setCaptions(next);
     setUsage(null);
@@ -484,7 +539,6 @@ function Workspace() {
   async function confirmDeleteRecord() {
     if (!deleteRecord || deletingRecord) return;
     setDeletingRecord(true);
-    setDeleteError("");
     try {
       await api("delete_record", { id: deleteRecord.id });
       setRecords((current) => current.filter((r) => r.id !== deleteRecord.id));
@@ -494,7 +548,6 @@ function Workspace() {
       setDeleteRecord(null);
       await refresh();
     } catch (e) {
-      setDeleteError(String(e instanceof Error ? e.message : e));
       fail(e);
     } finally {
       setDeletingRecord(false);
@@ -502,9 +555,12 @@ function Workspace() {
   }
 
   async function openRecord(id: number) {
+    const request = ++recordRequest.current;
     setBusy(true);
     try {
-      setRecord(await api<RecordDetail>("get_record", { id }));
+      const next = await api<RecordDetail>("get_record", { id });
+      if (request !== recordRequest.current) return;
+      setRecord(next);
       setPage("records");
     } catch (e) {
       fail(e);
@@ -514,6 +570,7 @@ function Workspace() {
   }
 
   const nav = (p: string) => {
+    recordRequest.current += 1;
     setPage(p);
     setRecord(null);
     setQuery("");
@@ -555,11 +612,6 @@ function Workspace() {
           </button>
         </header>
         <main>
-          {error && (
-            <div role="alert" className="native-error">
-              {error}
-            </div>
-          )}
           {onboardStep === 0 ? (
             <div className="onboard-welcome">
               <div className="onboard-wave">
@@ -604,6 +656,11 @@ function Workspace() {
             </>
           ) : onboardStep === 2 ? (
             <ProductKnowledge
+              key={selectedLibrary?.id ?? "empty"}
+              libraries={libraries}
+              libraryId={selectedLibrary?.id}
+              onSelectLibrary={setLibraryId}
+              onToggleLibrary={(id, enabled) => void toggleLibrary(id, enabled)}
               cache={knowledge}
               onCache={setKnowledge}
               hasKey={Boolean(keys.openai)}
@@ -628,6 +685,7 @@ function Workspace() {
               <div className="native-mode-picker">
                 <button
                   className={mode === "subtitle" ? "selected" : ""}
+                  aria-pressed={mode === "subtitle"}
                   onClick={() => setMode("subtitle")}
                 >
                   <h2>字幕翻译</h2>
@@ -636,6 +694,7 @@ function Workspace() {
                 </button>
                 <button
                   className={mode === "meeting" ? "selected" : ""}
+                  aria-pressed={mode === "meeting"}
                   onClick={() => setMode("meeting")}
                 >
                   <h2>会议翻译</h2>
@@ -677,7 +736,14 @@ function Workspace() {
   return (
     <>
       <aside className="sidebar">
-        <a className="brand" href="#home" onClick={() => nav("home")}>
+        <a
+          className="brand"
+          href="#home"
+          onClick={(event) => {
+            event.preventDefault();
+            nav("home");
+          }}
+        >
           <span className="brand-icon">
             <i />
             <i />
@@ -714,12 +780,6 @@ function Workspace() {
                   : ""
           }
         >
-          {error && (
-            <div role="alert" className="native-error">
-              {error}
-              <button onClick={() => setError("")}>×</button>
-            </div>
-          )}
           {!ready ? (
             <p role="status">正在读取本地数据…</p>
           ) : record ? (
@@ -747,6 +807,7 @@ function Workspace() {
                     <button
                       disabled={active}
                       className={mode === "subtitle" ? "selected" : ""}
+                      aria-pressed={mode === "subtitle"}
                       onClick={() => setMode("subtitle")}
                     >
                       <span className="mode-icon">
@@ -759,6 +820,7 @@ function Workspace() {
                     <button
                       disabled={active}
                       className={mode === "meeting" ? "selected" : ""}
+                      aria-pressed={mode === "meeting"}
                       onClick={() => setMode("meeting")}
                     >
                       <span className="mode-icon">
@@ -876,6 +938,8 @@ function Workspace() {
                   <div className="heading-row">
                     <h1>记录</h1>
                     <input
+                      type="search"
+                      aria-label="搜索会议记录"
                       placeholder="搜索记录"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
@@ -937,12 +1001,14 @@ function Workspace() {
           )}
           {ready && (
             <div hidden={page !== "knowledge" || Boolean(record)}>
-              {learningNotice && (
-                <p className="subtitle" role="status">
-                  {learningNotice}
-                </p>
-              )}
               <ProductKnowledge
+                key={selectedLibrary?.id ?? "empty"}
+                libraries={libraries}
+                libraryId={selectedLibrary?.id}
+                onSelectLibrary={setLibraryId}
+                onToggleLibrary={(id, enabled) =>
+                  void toggleLibrary(id, enabled)
+                }
                 cache={knowledge}
                 onCache={setKnowledge}
                 hasKey={Boolean(keys.openai)}
@@ -969,7 +1035,6 @@ function Workspace() {
             确定删除「{deleteRecord.title}
             」吗？录音、原文、译文和纪要将永久删除，无法恢复。用量统计会保留。
           </p>
-          {deleteError && <p role="alert">{deleteError}</p>}
           <div className="dialog-actions">
             <button
               disabled={deletingRecord}
@@ -1098,7 +1163,7 @@ function RecordList({
       ) : (
         <div className="records-empty">
           <FileText />
-          <h3>还没有会议记录</h3>
+          <h2>还没有会议记录</h2>
           <p>结束一次会议翻译后，录音、原文、译文与纪要会显示在这里。</p>
           <button className="primary" onClick={onStart}>
             开始会议
@@ -1156,8 +1221,7 @@ function RecordView({
     [editingTranscript, setEditingTranscript] = useState(false),
     [transcriptDraft, setTranscriptDraft] = useState("");
   const [askOpen, setAskOpen] = useState(false),
-    [asking, setAsking] = useState(false),
-    [askError, setAskError] = useState("");
+    [asking, setAsking] = useState(false);
   const titleFocused = useRef(false);
   const titleDraftChanged = useRef(false);
   useEffect(() => {
@@ -1182,7 +1246,6 @@ function RecordView({
   async function askQuestion() {
     if (asking || !question.trim()) return;
     setAsking(true);
-    setAskError("");
     try {
       setAnswer(
         (
@@ -1194,7 +1257,7 @@ function RecordView({
         ).answer,
       );
     } catch (reason) {
-      setAskError(reason instanceof Error ? reason.message : String(reason));
+      fail(reason);
     } finally {
       setAsking(false);
     }
@@ -1403,7 +1466,7 @@ function RecordView({
           {compare ? "收起原文" : "显示原文"}
         </button>
       </header>
-      {r.error && <div className="native-error">部分内容未完成：{r.error}</div>}
+      <ErrorNotice message={r.error ? `部分内容未完成：${r.error}` : null} />
       <div
         className={"native-record-columns " + (!compare ? "document-only" : "")}
         style={{
@@ -1503,7 +1566,7 @@ function RecordView({
                     {summarizing ? "正在整理…" : "生成纪要与时间线"}
                   </button>
                   {summaryStatus?.error && (
-                    <small role="status">{summaryStatus.error}</small>
+                    <ErrorNotice message={summaryStatus.error} />
                   )}
                 </div>
               )
@@ -1565,7 +1628,7 @@ function RecordView({
                   {summarizing ? "正在整理…" : "生成纪要与时间线"}
                 </button>
                 {summaryStatus?.error && (
-                  <small role="status">{summaryStatus.error}</small>
+                  <ErrorNotice message={summaryStatus.error} />
                 )}
                 <small>会将本条记录的转录文字发送至 OpenAI。</small>
               </div>
@@ -1873,7 +1936,6 @@ function RecordView({
                 <NotesDocument text={answer} seek={seek} />
               </div>
             )}
-            {askError && <p role="alert">{askError}</p>}
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -2006,10 +2068,6 @@ function UsageView({ records }: { records: UsageRow[] }) {
       minutes: rs.reduce((n, r) => n + r.durationMs / 60000, 0),
     };
   });
-  const max = Math.max(
-    0.01,
-    ...daily.map((d) => (metric === "cost" ? d.cost : d.minutes)),
-  );
   const knowledgeRows = events.filter((r) => r.knowledge);
   const knownKnowledge = knowledgeRows.some((r) => usageCost(r) != null);
   const knownSession = events.some((r) => r.usage?.estimated_usd != null);
@@ -2087,8 +2145,8 @@ function UsageView({ records }: { records: UsageRow[] }) {
       <div className="usage-charts">
         <section className="trend-card">
           <header>
-            <h3>使用趋势</h3>
-            <div className="segmented">
+            <h2>使用趋势</h2>
+            <div className="segmented" role="group" aria-label="趋势指标">
               {[
                 ["cost", "费用"],
                 ["minutes", "时长"],
@@ -2096,6 +2154,7 @@ function UsageView({ records }: { records: UsageRow[] }) {
                 <button
                   key={id}
                   className={metric === id ? "active" : ""}
+                  aria-pressed={metric === id}
                   onClick={() => setMetric(id)}
                 >
                   {label}
@@ -2104,40 +2163,15 @@ function UsageView({ records }: { records: UsageRow[] }) {
             </div>
           </header>
           <div className="chart-unit">{metric === "cost" ? "USD" : "分钟"}</div>
-          <div className="bar-chart">
-            {daily.map((d, i) => (
-              <button
-                key={d.day}
-                title={`${new Date(d.day).toLocaleDateString()} · ${money(d.cost)} · ${d.minutes.toFixed(1)} 分钟`}
-                onClick={() => setSelected(selected === d.day ? null : d.day)}
-                className={selected === d.day ? "selected" : ""}
-              >
-                <span className="bar-value">
-                  {metric === "cost" ? money(d.cost) : d.minutes.toFixed(0)}
-                </span>
-                <span
-                  className="chart-bar"
-                  style={{
-                    height:
-                      ((metric === "cost" ? d.cost : d.minutes) / max) * 76 +
-                      2 +
-                      "%",
-                  }}
-                />
-                <small>
-                  {days === 7 || i % 5 === 0
-                    ? new Date(d.day).toLocaleDateString("zh-CN", {
-                        month: "numeric",
-                        day: "numeric",
-                      })
-                    : ""}
-                </small>
-              </button>
-            ))}
-          </div>
+          <UsageChart
+            daily={daily}
+            metric={metric}
+            selected={selected}
+            onSelect={setSelected}
+          />
         </section>
         <section className="breakdown-card">
-          <h3>费用构成</h3>
+          <h2>费用构成</h2>
           <div
             className="cost-donut"
             style={{
@@ -2170,15 +2204,19 @@ function UsageView({ records }: { records: UsageRow[] }) {
       </div>
       <section className="record-costs">
         <header>
-          <h3 id="usage-cost-heading">费用明细</h3>
+          <h2 id="usage-cost-heading">费用明细</h2>
           {selected !== null && (
             <button onClick={() => setSelected(null)}>显示全部</button>
           )}
         </header>
+        <p id="usage-table-hint" className="usage-scroll-hint">
+          表格可左右滚动，查看完整明细。
+        </p>
         <div
           className="usage-cost-table"
           role="region"
           aria-labelledby="usage-cost-heading"
+          aria-describedby="usage-table-hint"
           tabIndex={0}
         >
           <table>

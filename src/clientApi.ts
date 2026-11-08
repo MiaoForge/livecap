@@ -94,6 +94,7 @@ export type Knowledge = {
   sources: { title: string; url: string }[];
   usage: KnowledgeUsage;
 };
+export type KnowledgeLibrary = { id: string; cache: Knowledge };
 export type KnowledgeProgress = {
   stage:
     | "planning"

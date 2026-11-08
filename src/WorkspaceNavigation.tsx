@@ -50,7 +50,10 @@ export function WorkspaceNavigation({
             href={"#" + p}
             className={page === p ? "active" : ""}
             aria-current={page === p ? "page" : undefined}
-            onClick={() => onNavigate(p)}
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate(p);
+            }}
           >
             <span className="nav-icon">{navIcons[p]}</span>
             {names[p]}
@@ -66,7 +69,10 @@ export function WorkspaceNavigation({
           href="#settings"
           className={"mobile-settings " + (page === "settings" ? "active" : "")}
           aria-current={page === "settings" ? "page" : undefined}
-          onClick={() => onNavigate("settings")}
+          onClick={(event) => {
+            event.preventDefault();
+            onNavigate("settings");
+          }}
         >
           设置
         </a>
@@ -77,7 +83,10 @@ export function WorkspaceNavigation({
             href="#settings"
             className={page === "settings" ? "active" : ""}
             aria-current={page === "settings" ? "page" : undefined}
-            onClick={() => onNavigate("settings")}
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate("settings");
+            }}
           >
             <span className="nav-icon">
               <Settings2 />

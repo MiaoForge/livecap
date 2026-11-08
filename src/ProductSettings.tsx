@@ -1,3 +1,4 @@
+import { useNotify } from "./Notifications";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { check } from "@tauri-apps/plugin-updater";
@@ -69,6 +70,7 @@ const displayVersion = (version: string) =>
   `v${version.replace(/-rc\.(\d+)$/, "-rc$1")}`;
 
 function GeneralSettings({ active }: { active: boolean }) {
+  const notify = useNotify();
   const [info, setInfo] = useState<{
     version: string;
     configured: boolean;
@@ -81,7 +83,7 @@ function GeneralSettings({ active }: { active: boolean }) {
     if (desktop)
       void api<{ version: string; configured: boolean }>("app_update_info")
         .then(setInfo)
-        .catch(() => setMessage("无法读取版本信息。"));
+        .catch(() => notify("无法读取版本信息。"));
   }, []);
   useEffect(
     () => () => {
@@ -103,7 +105,8 @@ function GeneralSettings({ active }: { active: boolean }) {
           : "当前已是最新版本。",
       );
     } catch {
-      setMessage("检查更新失败，请稍后重试。");
+      setMessage("");
+      notify("检查更新失败，请稍后重试。");
     } finally {
       setBusy(null);
     }
@@ -119,7 +122,8 @@ function GeneralSettings({ active }: { active: boolean }) {
         if (event.event === "Finished") setMessage("正在验证并安装更新…");
       });
     } catch {
-      setMessage("更新安装失败，请重试。");
+      setMessage("");
+      notify("更新安装失败，请重试。");
     } finally {
       installing.current = false;
       setBusy(null);
@@ -429,6 +433,7 @@ export function ProductSettings({
                     key={provider}
                     disabled={active}
                     className={s.provider === provider ? "selected" : ""}
+                    aria-pressed={s.provider === provider}
                     onClick={() => {
                       change({ provider });
                       setKey("");
@@ -467,6 +472,7 @@ export function ProductSettings({
                   className="key-editor"
                   onSubmit={async (e) => {
                     e.preventDefault();
+                    if (!desktop || working || !key.trim()) return;
                     setWorking(true);
                     try {
                       await api("save_api_key", { provider: s.provider, key });
@@ -482,6 +488,7 @@ export function ProductSettings({
                 >
                   <input
                     aria-label="API Key"
+                    disabled={!desktop || working}
                     autoComplete="off"
                     type="password"
                     placeholder="粘贴 API Key"
