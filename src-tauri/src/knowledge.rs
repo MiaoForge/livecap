@@ -172,10 +172,10 @@ impl KnowledgeCache {
         }
         let mut seen = HashSet::new();
         for entry in &self.entries {
-            if !valid_term(&entry.term)
+            if !valid_spoken_term(&entry.term)
                 || !seen.insert(entry.term.trim().to_lowercase())
                 || entry.aliases.len() > 8
-                || !entry.aliases.iter().all(|alias| valid_term(alias))
+                || !entry.aliases.iter().all(|alias| valid_spoken_term(alias))
                 || !field(&entry.meaning, 300, true)
                 || !field(&entry.translation, 100, true)
                 || !field(&entry.example, 300, false)
@@ -207,7 +207,7 @@ impl KnowledgeCache {
         if !self.enabled {
             return Vec::new();
         }
-        let source = source.to_lowercase();
+        let source = spoken_text(source);
         let manual: HashSet<_> = manual
             .iter()
             .map(|term| term.trim().to_lowercase())
@@ -216,12 +216,15 @@ impl KnowledgeCache {
             .iter()
             .rev()
             .take(3)
-            .map(|text| text.to_lowercase())
+            .map(|text| spoken_text(text))
             .collect();
         let mut ranked: Vec<_> = self
             .entries
             .iter()
             .filter_map(|entry| {
+                if !valid_spoken_term(&entry.term) {
+                    return None;
+                }
                 if std::iter::once(&entry.term)
                     .chain(&entry.aliases)
                     .any(|term| manual.contains(&term.trim().to_lowercase()))
@@ -230,6 +233,7 @@ impl KnowledgeCache {
                 }
                 let score = std::iter::once(&entry.term)
                     .chain(&entry.aliases)
+                    .filter(|term| valid_spoken_term(term))
                     .map(|term| {
                         let term = term.trim().to_lowercase();
                         let weight = term.chars().count();
@@ -273,8 +277,45 @@ pub struct KnowledgeHint<'a> {
     translation: &'a str,
 }
 
-fn valid_term(term: &str) -> bool {
-    field(term, 80, true) && crate::openai::valid_keyword(term) && !term.contains('\t')
+fn has_code_syntax(term: &str) -> bool {
+    let slash_acronym = term.contains('/')
+        && term.split('/').all(|part| {
+            !part.is_empty()
+                && part.bytes().all(|byte| {
+                    byte.is_ascii_uppercase() || byte.is_ascii_digit() || b"+#-".contains(&byte)
+                })
+        });
+    (term.contains('/') && !slash_acronym)
+        || term.contains(['\t', '_', '`', '\\', '=', '[', ']', '{', '}', ';', '$', '%'])
+        || term.contains("::")
+        || term.char_indices().any(|(index, character)| {
+            character == '(' && index > 0 && !term[..index].ends_with(char::is_whitespace)
+        })
+        || term.split_whitespace().any(|word| {
+            word.trim_start_matches(['(', '"', '\''])
+                .starts_with(['-', '−', '@'])
+        })
+}
+
+pub(crate) fn valid_spoken_term(term: &str) -> bool {
+    let term = term.trim();
+    // Automatic vocabulary is for speech. Keep names such as C++, Node.js and
+    // TableGen, but do not feed source syntax or command switches into ASR.
+    field(term, 80, true) && crate::openai::valid_keyword(term) && !has_code_syntax(term)
+}
+
+fn spoken_text(text: &str) -> String {
+    // An acronym embedded in a switch such as --ast-dump is not a spoken match.
+    text.split_whitespace()
+        .filter(|word| {
+            !has_code_syntax(word.trim_matches([
+                '.', ',', '!', '?', ';', '"', '\'', '“', '”', '‘', '’', '。', '，', '！', '？',
+                '、',
+            ]))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 pub(crate) fn contains_term(text: &str, term: &str) -> bool {
@@ -334,6 +375,16 @@ fn hotword_key(term: &str) -> String {
 }
 
 impl KnowledgeCache {
+    pub(crate) fn retain_spoken_terms(&mut self) {
+        self.entries.retain(|entry| valid_spoken_term(&entry.term));
+        for entry in &mut self.entries {
+            entry.aliases.retain(|alias| valid_spoken_term(alias));
+        }
+        if self.entries.is_empty() {
+            self.enabled = false;
+        }
+    }
+
     pub(crate) fn normalize_translations(&mut self) {
         let llvm = self.focus.to_ascii_lowercase().contains("llvm");
         for entry in &mut self.entries {
@@ -403,6 +454,7 @@ pub fn merge_asr_terms(
         let mut ranked: Vec<_> = cache
             .entries
             .iter()
+            .filter(|entry| valid_spoken_term(&entry.term))
             .map(|entry| (score(entry), entry))
             .collect();
         ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
@@ -422,7 +474,8 @@ pub fn merge_asr_terms(
                 .chain(ranked.iter().flat_map(|(_, entry)| &entry.aliases))
                 .filter_map(|term| {
                     let term = term.trim();
-                    (valid_term(term) && seen.insert(hotword_key(term))).then(|| term.to_owned())
+                    (valid_spoken_term(term) && seen.insert(hotword_key(term)))
+                        .then(|| term.to_owned())
                 })
                 .take(cap),
         );
@@ -529,6 +582,89 @@ pub(crate) fn sample_cache(terms: &[&str]) -> KnowledgeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spoken_vocabulary_rejects_code_syntax_but_preserves_established_names() {
+        for term in [
+            "--help",
+            "(-O2)",
+            "\"--help\"",
+            "-O2",
+            "-fno-rtti",
+            "clang -Xclang",
+            "__attribute__",
+            "__builtin_expect",
+            "LLVM_VERSION_MAJOR",
+            "get_value",
+            "llvm::Module",
+            "getName()",
+            "foo(int)",
+            "std::vector<T>",
+            "-std=c++20",
+            "foo=bar",
+            "include/clang.h",
+            "`AST`",
+            "$PATH",
+            "@llvm.memcpy",
+            "value[0]",
+        ] {
+            assert!(!valid_spoken_term(term), "{term}");
+        }
+        for term in [
+            "LLVM",
+            "AST",
+            "Sema",
+            "TableGen",
+            "ASTContext",
+            "C++",
+            "C#",
+            "F#",
+            "RISC-V",
+            "Objective-C",
+            "Node.js",
+            ".NET",
+            "TCP/IP",
+            "CI/CD",
+            "HTTP/2",
+            "profile-guided optimization",
+            "abstract syntax tree (AST)",
+            "静态单赋值",
+        ] {
+            assert!(valid_spoken_term(term), "{term}");
+        }
+    }
+
+    #[test]
+    fn code_entries_and_aliases_do_not_enter_translation_hints_or_asr() {
+        let mut cache = sample_cache(&["__attribute__", "-O2", "AST", "Sema"]);
+        cache.entries[2].aliases = vec!["--ast-dump".into(), "syntax tree".into()];
+        let context = VecDeque::from(["__attribute__ -O2 --ast-dump".into()]);
+        assert!(
+            cache
+                .retrieve("__attribute__ -O2 --ast-dump", &context, &[])
+                .is_empty()
+        );
+        assert_eq!(
+            cache.retrieve("syntax tree", &VecDeque::new(), &[])[0].term,
+            "AST"
+        );
+        assert_eq!(cache.retrieve("AST;", &VecDeque::new(), &[])[0].term, "AST");
+        assert_eq!(
+            cache.retrieve("Sema,", &VecDeque::new(), &[])[0].term,
+            "Sema"
+        );
+        assert_eq!(
+            merge_asr_terms(&[], Some(&cache), ""),
+            ["AST", "Sema", "syntax tree"]
+        );
+        // Explicit user vocabulary remains available even when it is code-shaped.
+        let merged = merge_asr_terms(&["__custom__".into()], Some(&cache), "");
+        assert_eq!(merged[0], "__custom__");
+        cache.retain_spoken_terms();
+        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(cache.entries[0].aliases, ["syntax tree"]);
+        cache.validate_generated().unwrap();
+    }
 
     #[test]
     fn only_public_https_references_and_stored_source_links_are_allowed() {

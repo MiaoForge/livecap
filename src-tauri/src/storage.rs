@@ -508,6 +508,7 @@ impl Storage {
     }
 
     pub fn replace_knowledge(&self, mut cache: KnowledgeCache) -> Result<KnowledgeCache, String> {
+        cache.retain_spoken_terms();
         cache.normalize_translations();
         cache.validate_generated()?;
         let usage = serde_json::to_string(&cache.usage).map_err(|_| STORAGE_ERROR)?;
@@ -549,6 +550,7 @@ impl Storage {
                 row.get(0)
             })
             .map_err(|_| STORAGE_ERROR)?;
+        incoming.retain_spoken_terms();
         incoming.normalize_translations();
         let usage = serde_json::to_string(&incoming.usage).map_err(|_| STORAGE_ERROR)?;
         let mut added = incoming.entries.len();
@@ -968,6 +970,7 @@ fn read_knowledge(connection: &Connection) -> Result<Option<KnowledgeCache>, Str
         .map_err(|_| STORAGE_ERROR)?;
     data.map(|data| {
         let mut cache: KnowledgeCache = serde_json::from_str(&data).map_err(|_| STORAGE_ERROR)?;
+        cache.retain_spoken_terms();
         cache.normalize_translations();
         Ok(cache)
     })
@@ -1394,6 +1397,57 @@ mod tests {
         assert!(matches!(usage[0].mode, SessionMode::Subtitle));
         assert!(usage[0].record_id.is_none());
         assert_eq!(usage[0].created_at, date);
+    }
+
+    #[test]
+    fn existing_knowledge_is_filtered_on_read_without_changing_stored_data_or_usage() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        let mut cache = sample_cache(&["__attribute__", "--help", "AST"]);
+        cache.entries[2].aliases = vec!["--ast-dump".into(), "syntax tree".into()];
+        cache.usage.input_tokens = 123;
+        cache.updated_at = "2026-11-08T00:00:00.000Z".into();
+        write_knowledge(&storage.connection().unwrap(), &cache).unwrap();
+        let loaded = storage.load_knowledge().unwrap().unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.entries[0].term, "AST");
+        assert_eq!(loaded.entries[0].aliases, ["syntax tree"]);
+        assert_eq!(loaded.usage.input_tokens, 123);
+        assert_eq!(loaded.updated_at, cache.updated_at);
+        let stored: String = storage
+            .connection()
+            .unwrap()
+            .query_row("SELECT data FROM knowledge_cache WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(stored.contains("__attribute__"));
+        assert!(stored.contains("--ast-dump"));
+        let only_code = sample_cache(&["__builtin_expect"]);
+        write_knowledge(&storage.connection().unwrap(), &only_code).unwrap();
+        let loaded = storage.load_knowledge().unwrap().unwrap();
+        assert!(loaded.entries.is_empty());
+        assert!(!loaded.enabled);
+    }
+
+    #[test]
+    fn code_only_replacement_preserves_previous_knowledge_and_meeting_usage_is_recorded() {
+        let storage = Storage::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        storage.replace_knowledge(sample_cache(&["AST"])).unwrap();
+        assert!(
+            storage
+                .replace_knowledge(sample_cache(&["__attribute__"]))
+                .is_err()
+        );
+        assert_eq!(
+            storage
+                .append_meeting_knowledge(sample_cache(&["-O2"]))
+                .unwrap(),
+            0
+        );
+        let saved = storage.load_knowledge().unwrap().unwrap();
+        assert_eq!(saved.entries.len(), 1);
+        assert_eq!(saved.entries[0].term, "AST");
+        assert_eq!(storage.list_knowledge_usage().unwrap().len(), 2);
     }
 
     #[test]
